@@ -46,6 +46,10 @@ class A2MXServer():
 		self.sock.close()
 		self.nodelist.remove(self)
 
+def A2MXRequest(fn):
+	fn.A2MXRequest__marker__ = True
+	return fn
+
 class A2MXStream():
 	def __init__(self, nodelist=None, uri=None, sock=None):
 		assert nodelist != None
@@ -161,10 +165,53 @@ class A2MXStream():
 			if not auth:
 				raise InvalidDataException('3')
 			self.__remote_auth = True
-			print("connection up")
+			print("connection up with", self.__remote_ecc.get_pubkey())
+			if self.uri != None:
+				d = self.request('pullNetworkInfo', 'adsf')
+				d += self.request('parse')
+				d += self.request('shit', '0123456789')
+				self.send(d)
 		else:
-			assert False
+			self.parse(data)
 		self.handler = (4, self.getlength)
+
+	def parse(self, data):
+		i = 0
+		while i < len(data):
+			requestLen = struct.unpack('>L', data[i:i+4])[0]
+			i += 4
+			ri = i
+			args = []
+			while ri < i + requestLen:
+				argLen = struct.unpack('>L', data[ri:ri+4])[0]
+				ri += 4
+				arg = data[ri:ri+argLen]
+				ri += argLen
+				args.append(arg)
+			i = ri
+			fn = args[0].decode('UTF-8')
+			try:
+				f = getattr(self, fn)
+			except AttributeError:
+				pass
+			else:
+				try:
+					if f.A2MXRequest__marker__ == True:
+						f(*args[1:])
+						continue
+				except AttributeError:
+					pass
+			print("Invalid request {}".format(fn))
+		assert i == len(data)
+
+	def request(self, *args):
+		data = b''
+		for arg in args:
+			if isinstance(arg, str):
+				arg = arg.encode('UTF-8')
+			data += struct.pack('>L', len(arg))
+			data += arg
+		return struct.pack('>L', len(data)) + data
 
 	def send(self, *data):
 		length = 0
@@ -185,6 +232,10 @@ class A2MXStream():
 		print("finish")
 		self.sock.close()
 		self.nodelist.remove(self)
+
+	@A2MXRequest
+	def pullNetworkInfo(self, time):
+		print("pullNetworkInfo", time)
 
 class A2MXNodelist():
 	def __init__(self):
