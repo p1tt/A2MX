@@ -233,9 +233,11 @@ class A2MXStream():
 		self.nodelist.new_path(path, mypub, signature, self)
 
 class A2MXPath():
-	def __init__(self, path, pub, signature):
-		self.endnode = False
+	def __init__(self, path, pub, signature, prevpath=None):
+		self._endnode = False
 		self.nextpath = False
+		self.prevpath = prevpath
+		self.streamsent = []
 
 		self.pub = ECC()
 		self.pub.pubkey_x, self.pub.pubkey_y = self.pub.key_uncompress(pub)
@@ -244,10 +246,10 @@ class A2MXPath():
 			for d in A2MXStream.parse(path):
 				if len(d) != 3:
 					raise InvalidDataException('unparseable path')
-				self.nextpath = A2MXPath(*d)
+				self.nextpath = A2MXPath(*d, prevpath=self)
 		else:
-			self.endnode = ECC()
-			self.endnode.pubkey_x, self.endnode.pubkey_y = self.endnode.key_uncompress(path)
+			self._endnode = ECC()
+			self._endnode.pubkey_x, self._endnode.pubkey_y = self._endnode.key_uncompress(path)
 
 		data = b''.join((path, pub))
 		if self.nextpath:
@@ -256,17 +258,24 @@ class A2MXPath():
 			verify = self.endnode.verify(signature, data)
 		if not verify:
 			raise InvalidDataException('signature failure')
-		self.path = path
-		self.signature = signature
+		if prevpath == None:
+			self.path = path
+			self.signature = signature
+
+	@property
+	def endnode(self):
+		if not self._endnode:
+			return self.nextpath.endnode
+		return self._endnode
 
 	def __str__(self):
-		return "({}, {})".format(ECC.b58(self.endnode.pubkey_hash()).decode('ascii') if self.endnode else str(self.nextpath), ECC.b58(self.pub.pubkey_hash()).decode('ascii'))
+		return "({}, {})".format(ECC.b58(self._endnode.pubkey_hash()).decode('ascii') if self._endnode else str(self.nextpath), ECC.b58(self.pub.pubkey_hash()).decode('ascii'))
 
 class A2MXNodelist():
 	def __init__(self):
 		self.rlist = []
 		self.wlist = []
-		self.networkInfo = {}
+		self.paths = {}
 		try:
 			with open('.a2mx/priv', 'rb') as f:
 				privkey = f.read()
@@ -312,26 +321,51 @@ class A2MXNodelist():
 		print("new_path", p)
 		if p.pub.get_pubkey() != self.ecc.get_pubkey():
 			raise InvalidDataException('path not for me?')
+		p.stream = stream
 
+		# save path
+		endpub = p.endnode.get_pubkey()
+		try:
+			pathlist = self.paths[endpub]
+		except KeyError:
+			self.paths[endpub] = []
+			pathlist = self.paths[endpub]
+		pathlist.append(p)
+
+		self.send_path(p)
+
+		for pathlist in self.paths.values():
+			for path in pathlist:
+				self.send_path(path, stream)
+
+	def send_path(self, path, stream=None):
+		# find all nodes not included in this path and forward the path
 		nodes = []
-		x = p
+		x = path
 		while x:
 			nodes.append(x.pub.get_pubkey())
 			if x.endnode:
 				nodes.append(x.endnode.get_pubkey())
 			x = x.nextpath
-		for stream in filter(lambda s: isinstance(s, A2MXStream), self.rlist):
+		if stream == None:
+			streams = filter(lambda s: isinstance(s, A2MXStream), self.rlist)
+		else:
+			streams = (stream, )
+		for stream in streams:
+			if stream in path.streamsent:
+				continue
 			if stream.remote_ecc.get_pubkey() in nodes:
 				continue
 
 			print("INFORM STREAM", ECC.b58(stream.remote_ecc.pubkey_hash()).decode('ascii'))
-			oldpath = stream.request(p.path, p.pub.pubkey_c(), p.signature)
+			oldpath = stream.request(path.path, path.pub.pubkey_c(), path.signature)
 			data = bytearray()
 			data += oldpath
 			data += stream.remote_ecc.pubkey_c()
 			data = bytes(data)
 			r = stream.request(b'I', oldpath, stream.remote_ecc.pubkey_c(), self.ecc.sign(data))
 			stream.send(r)
+			path.streamsent.append(stream)
 
 nodelist = A2MXNodelist()
 server = A2MXServer(nodelist)
