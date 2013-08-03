@@ -26,6 +26,7 @@ class A2MXServer():
 				break
 			except OSError:
 				bind = (bind[0], bind[1] + 1)
+		print("I am", ECC.b58(self.nodelist.ecc.pubkey_hash()).decode('ascii'), ECC.bb(self.nodelist.ecc.pubkey_hash()))
 		print("bound to", bind)
 		self.sock.listen(5)
 		self.nodelist.add(self)
@@ -57,7 +58,7 @@ class A2MXStream():
 		self.nodelist = nodelist
 		self.uri = uri
 		self.__connected = False
-		self.__remote_ecc = None
+		self.remote_ecc = None
 		self.__remote_auth = False
 		self.__pub_sent = False
 		if sock:
@@ -122,8 +123,7 @@ class A2MXStream():
 
 	def __send_pub(self):
 		ecc = self.nodelist.ecc
-		x, ybit = ecc.point_compress(ecc.pubkey_x, ecc.pubkey_y)
-		self.send(b'A', b'X' if ybit else b'x', x)
+		self.send(ecc.pubkey_c())
 		self.__pub_sent = True
 
 	def getlength(self, length):
@@ -140,18 +140,10 @@ class A2MXStream():
 		if self.__pub_sent:		# if we sent our public key then all data we receive has to be encrypted
 			data = self.nodelist.ecc.decrypt(bytes(data))
 
-		if self.__remote_ecc == None:	# first data we expect is the compressed remote public key
-			if chr(data[0]) != 'A':
-				raise InvalidDataException('1')
-			if chr(data[1]) == 'X':
-				ybit = 1
-			elif chr(data[1]) == 'x':
-				ybit = 0
-			else:
-				raise InvalidDataException('2')
-			pubkey_x, pubkey_y = self.nodelist.ecc.point_uncompress(bytes(data[2:]), ybit)
+		if self.remote_ecc == None:	# first data we expect is the compressed remote public key
+			pubkey_x, pubkey_y = self.nodelist.ecc.key_uncompress(data)
+			self.remote_ecc = ECC(pubkey_x=pubkey_x, pubkey_y=pubkey_y)
 
-			self.__remote_ecc = ECC(pubkey_x=pubkey_x, pubkey_y=pubkey_y)
 			# ok we have the remote public key, from now on we send everything encrypted
 			self.__raw_send = self.send
 			self.send = self.encrypted_send
@@ -159,23 +151,39 @@ class A2MXStream():
 			if not self.__pub_sent:	# send our public key if we haven't already
 				self.__send_pub()
 
-			self.send(self.nodelist.ecc.sign(self.__remote_ecc.get_pubkey()))
+			# send the remote public key signed by us
+			self.send(self.nodelist.ecc.sign(self.remote_ecc.get_pubkey()))
 		elif not self.__remote_auth:	# second data is our own public key signed by remote
-			auth = self.__remote_ecc.verify(bytes(data), self.nodelist.ecc.get_pubkey())
+			auth = self.remote_ecc.verify(bytes(data), self.nodelist.ecc.get_pubkey())
 			if not auth:
 				raise InvalidDataException('3')
 			self.__remote_auth = True
-			print("connection up with", self.__remote_ecc.get_pubkey())
-			if self.uri != None:
-				d = self.request('pullNetworkInfo', 'adsf')
-				d += self.request('parse')
-				d += self.request('shit', '0123456789')
-				self.send(d)
+			print("connection up with", ECC.b58(self.remote_ecc.pubkey_hash()).decode('ascii'), ECC.bb(self.remote_ecc.pubkey_hash()))
+
+			# inform the peer about us
+			ecc = self.nodelist.ecc
+			data = bytearray()
+			data += ecc.pubkey_c()
+			data += self.remote_ecc.pubkey_c()
+			data = bytes(data)
+			r = self.request(b'I', ecc.pubkey_c(), self.remote_ecc.pubkey_c(), ecc.sign(data))
+			self.send(r)
 		else:
-			self.parse(data)
+			for d in self.parse(data):
+				fn = d[0].decode('UTF-8')
+				try:
+					f = getattr(self, fn)
+				except AttributeError:
+					pass
+				else:
+					if hasattr(f, 'A2MXRequest__marker__') and f.A2MXRequest__marker__ == True:
+						f(*d[1:])
+						continue
+				print("Invalid request {}".format(fn))
 		self.handler = (4, self.getlength)
 
-	def parse(self, data):
+	@staticmethod
+	def parse(data):
 		i = 0
 		while i < len(data):
 			requestLen = struct.unpack('>L', data[i:i+4])[0]
@@ -189,22 +197,11 @@ class A2MXStream():
 				ri += argLen
 				args.append(arg)
 			i = ri
-			fn = args[0].decode('UTF-8')
-			try:
-				f = getattr(self, fn)
-			except AttributeError:
-				pass
-			else:
-				try:
-					if f.A2MXRequest__marker__ == True:
-						f(*args[1:])
-						continue
-				except AttributeError:
-					pass
-			print("Invalid request {}".format(fn))
+			yield args
 		assert i == len(data)
 
-	def request(self, *args):
+	@staticmethod
+	def request(*args):
 		data = b''
 		for arg in args:
 			if isinstance(arg, str):
@@ -215,7 +212,6 @@ class A2MXStream():
 
 	def send(self, *data):
 		length = 0
-		sdata = []
 		for d in data:
 			length += len(d)
 		self.sock.send(struct.pack('>L', length), socket.MSG_MORE)
@@ -225,7 +221,7 @@ class A2MXStream():
 
 	def encrypted_send(self, *data):
 		data = b''.join(data)
-		data = self.nodelist.ecc.encrypt(data, self.__remote_ecc.get_pubkey())
+		data = self.nodelist.ecc.encrypt(data, self.remote_ecc.get_pubkey())
 		self.__raw_send(data)
 
 	def finish(self):
@@ -234,13 +230,46 @@ class A2MXStream():
 		self.nodelist.remove(self)
 
 	@A2MXRequest
-	def pullNetworkInfo(self, time):
-		print("pullNetworkInfo", time)
+	def I(self, path, mypub, signature):
+		self.nodelist.new_path(path, mypub, signature, self)
+
+class A2MXPath():
+	def __init__(self, path, pub, signature):
+		print("A2MXPath", len(path), len(pub), len(signature))
+		self.endnode = False
+		self.nextpath = False
+
+		self.pub = ECC()
+		self.pub.pubkey_x, self.pub.pubkey_y = self.pub.key_uncompress(pub)
+
+		if len(path) > 68:
+			for d in A2MXStream.parse(path):
+				if len(d) != 3:
+					raise InvalidDataException('unparseable path')
+				self.nextpath = A2MXPath(*d)
+				print("nextpath")
+		else:
+			self.endnode = ECC()
+			self.endnode.pubkey_x, self.endnode.pubkey_y = self.endnode.key_uncompress(path)
+
+		data = b''.join((path, pub))
+		if self.nextpath:
+			verify = self.nextpath.pub.verify(signature, data)
+		else:
+			verify = self.endnode.verify(signature, data)
+		if not verify:
+			raise InvalidDataException('signature failure')
+		self.path = path
+		self.signature = signature
+
+	def __str__(self):
+		return "A2MXPath({})<{}>".format(ECC.b58(self.endnode.pubkey_hash()).decode('ascii') if self.endnode else str(self.nextpath), ECC.b58(self.pub.pubkey_hash()).decode('ascii'))
 
 class A2MXNodelist():
 	def __init__(self):
 		self.rlist = []
 		self.wlist = []
+		self.networkInfo = {}
 		try:
 			with open('.a2mx/priv', 'rb') as f:
 				privkey = f.read()
@@ -260,6 +289,7 @@ class A2MXNodelist():
 				f.write(self.ecc.get_privkey())
 			with open('.a2mx/pub', 'wb') as f:
 				f.write(self.ecc.get_pubkey())
+
 	def add(self, selectable):
 		self.rlist.append(selectable)
 	def remove(self, selectable):
@@ -279,6 +309,46 @@ class A2MXNodelist():
 	def shutdown(self):
 		for sock in set(self.rlist + self.wlist):
 			sock.finish()
+
+	def new_path(self, path, mypub, signature, stream):
+		p = A2MXPath(path, mypub, signature)
+		print("new_path", p)
+		if p.pub.get_pubkey() != self.ecc.get_pubkey():
+			raise InvalidDataException('path not for me?')
+
+		nodes = []
+		x = p
+		while x:
+			nodes.append(x.pub.get_pubkey())
+			if x.endnode:
+				nodes.append(x.endnode.get_pubkey())
+			x = x.nextpath
+		for stream in filter(lambda s: isinstance(s, A2MXStream), self.rlist):
+			if stream.remote_ecc.get_pubkey() in nodes:
+				continue
+
+			print("INFORM STREAM", ECC.b58(stream.remote_ecc.pubkey_hash()).decode('ascii'))
+			oldpath = stream.request(p.path, p.pub.pubkey_c(), p.signature)
+			data = bytearray()
+			data += oldpath
+			data += stream.remote_ecc.pubkey_c()
+			data = bytes(data)
+			r = stream.request(b'I', oldpath, stream.remote_ecc.pubkey_c(), self.ecc.sign(data))
+			stream.send(r)
+
+		return
+		if mypub != self.ecc.pubkey_c():
+			# second public key is not our own, ignore request
+			raise InvalidDataError('invalid public key')
+		data = b''.join((path, mypub))
+		if not stream.remote_ecc.verify(signature, data):
+			# failed to verify signature
+			raise InvalidDataError('invalid signature')
+
+		# path:
+		#   signed_hop2(signed_hop3(signed_endnode(endnode), hop3), hop2)
+		# parse path...
+		#self.networkInfo[endnode] = [ stream, hop2, hop3, ..., endnode ]
 
 nodelist = A2MXNodelist()
 server = A2MXServer(nodelist)
