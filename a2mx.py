@@ -8,6 +8,8 @@ import os
 
 from ecc import ECC
 
+from config import config
+
 class InvalidDataException(Exception):
 	pass
 
@@ -15,18 +17,11 @@ class A2MXServer():
 	def __init__(self, nodelist):
 		self.nodelist = nodelist
 
-		bind = ('', 0xA22)
-
 		self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.sock.setblocking(0)
 		self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-		while True:
-			try:
-				self.sock.bind(bind)
-				break
-			except OSError:
-				bind = (bind[0], bind[1] + 1)
-		print("I am", ECC.b58(self.nodelist.ecc.pubkey_hash()).decode('ascii'), "bound to", bind)
+		self.sock.bind(config['bind'])
+		print("I am", ECC.b58(self.nodelist.ecc.pubkey_hash()).decode('ascii'), "bound to", config['bind'])
 		self.sock.listen(5)
 		self.nodelist.add(self)
 
@@ -136,11 +131,12 @@ class A2MXStream():
 		data = self.data[:length]
 		del self.data[:length]
 
+		ecc = self.nodelist.ecc
 		if self.__pub_sent:		# if we sent our public key then all data we receive has to be encrypted
-			data = self.nodelist.ecc.decrypt(bytes(data))
+			data = ecc.decrypt(bytes(data))
 
 		if self.remote_ecc == None:	# first data we expect is the compressed remote public key
-			pubkey_x, pubkey_y = self.nodelist.ecc.key_uncompress(data)
+			pubkey_x, pubkey_y = ecc.key_uncompress(data)
 			self.remote_ecc = ECC(pubkey_x=pubkey_x, pubkey_y=pubkey_y)
 
 			# ok we have the remote public key, from now on we send everything encrypted
@@ -151,16 +147,15 @@ class A2MXStream():
 				self.__send_pub()
 
 			# send the remote public key signed by us
-			self.send(self.nodelist.ecc.sign(self.remote_ecc.get_pubkey()))
+			self.send(ecc.sign(self.remote_ecc.get_pubkey()))
 		elif not self.__remote_auth:	# second data is our own public key signed by remote
-			auth = self.remote_ecc.verify(bytes(data), self.nodelist.ecc.get_pubkey())
+			auth = self.remote_ecc.verify(bytes(data), ecc.get_pubkey())
 			if not auth:
-				raise InvalidDataException('3')
+				raise InvalidDataException('failed to verify remote')
 			self.__remote_auth = True
 			print("connection up with", ECC.b58(self.remote_ecc.pubkey_hash()).decode('ascii'))
 
 			# inform the peer about us
-			ecc = self.nodelist.ecc
 			data = bytearray()
 			data += ecc.pubkey_c()
 			data += self.remote_ecc.pubkey_c()
@@ -209,14 +204,9 @@ class A2MXStream():
 			data += arg
 		return struct.pack('>L', len(data)) + data
 
-	def send(self, *data):
-		length = 0
-		for d in data:
-			length += len(d)
-		self.sock.send(struct.pack('>L', length), socket.MSG_MORE)
-		for d in data[:-1]:
-			self.sock.send(d, socket.MSG_MORE)
-		self.sock.send(data[-1])
+	def send(self, data):
+		self.sock.send(struct.pack('>L', len(data)), socket.MSG_MORE)
+		self.sock.send(data)
 
 	def encrypted_send(self, *data):
 		data = b''.join(data)
@@ -267,6 +257,10 @@ class A2MXPath():
 		if not self._endnode:
 			return self.nextpath.endnode
 		return self._endnode
+
+	@property
+	def is_endnode(self):
+		return self._endnode != False
 
 	def __str__(self):
 		return "({}, {})".format(ECC.b58(self._endnode.pubkey_hash()).decode('ascii') if self._endnode else str(self.nextpath), ECC.b58(self.pub.pubkey_hash()).decode('ascii'))
@@ -340,12 +334,12 @@ class A2MXNodelist():
 
 	def send_path(self, path, stream=None):
 		# find all nodes not included in this path and forward the path
-		nodes = []
+		nodes = set()
 		x = path
 		while x:
-			nodes.append(x.pub.get_pubkey())
-			if x.endnode:
-				nodes.append(x.endnode.get_pubkey())
+			nodes.add(x.pub.get_pubkey())
+			if x.is_endnode:
+				nodes.add(x.endnode.get_pubkey())
 			x = x.nextpath
 		if stream == None:
 			streams = filter(lambda s: isinstance(s, A2MXStream), self.rlist)
@@ -354,10 +348,9 @@ class A2MXNodelist():
 		for stream in streams:
 			if stream in path.streamsent:
 				continue
-			if stream.remote_ecc.get_pubkey() in nodes:
+			if stream.remote_ecc == None or stream.remote_ecc.get_pubkey() in nodes:
 				continue
 
-			print("INFORM STREAM", ECC.b58(stream.remote_ecc.pubkey_hash()).decode('ascii'))
 			oldpath = stream.request(path.path, path.pub.pubkey_c(), path.signature)
 			data = bytearray()
 			data += oldpath
@@ -370,7 +363,7 @@ class A2MXNodelist():
 nodelist = A2MXNodelist()
 server = A2MXServer(nodelist)
 
-for uri in sys.argv[1:]:
+for uri in config['targets']:
 	print("connect to", uri)
 	c = A2MXStream(nodelist, uri=uri)
 
