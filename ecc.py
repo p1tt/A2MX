@@ -1,10 +1,6 @@
 import pyelliptic
 import hashlib
 
-import bubblebabble
-
-b58chars = b'123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-
 class ECC(pyelliptic.ECC):
 	def __init__(self, pubkey=None, privkey=None, pubkey_x=None, pubkey_y=None):
 		pyelliptic.ECC.__init__(self, curve='secp521r1', pubkey=pubkey, privkey=privkey, pubkey_x=pubkey_x, pubkey_y=pubkey_y)
@@ -35,6 +31,8 @@ class ECC(pyelliptic.ECC):
 
 	@staticmethod
 	def b58(value):
+		b58chars = b'123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
 		inputnum = 0
 		for i in range(0, len(value)):
 		        inputnum += ord(value[-i-1:len(value)-i]) * 256 ** i
@@ -44,6 +42,3 @@ class ECC(pyelliptic.ECC):
 			inputnum //= 58
 		return b58part
 
-	@staticmethod
-	def bb(value):
-		return bubblebabble.bubblebabble(value)
