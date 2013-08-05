@@ -1,5 +1,5 @@
 config = {
-	'bind': ('', 2594),
+	'bind': [ ('', 2594) ],
 	'publish_axuri': None,
 	'targets': []
 }
