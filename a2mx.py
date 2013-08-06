@@ -170,7 +170,7 @@ class A2MXStream():
 			p = A2MXPath(ecc, self.remote_ecc)
 			self.node.new_path(p)
 			if self.uri != None:
-				r = self.request(b'P')
+				r = self.request('pull')
 				self.send(r)
 		else:
 			for d in self.parse(data):
@@ -230,17 +230,29 @@ class A2MXStream():
 		self.node.remove(self)
 
 	@A2MXRequest
-	def I(self, path):
+	def path(self, path):
 		p = A2MXPath(data=path)
 		p.stream = self
 		self.node.new_path(p)
 
 	@A2MXRequest
-	def P(self):
+	def pull(self):
 		for pathlist in self.node.paths.values():
 			for path in pathlist:
-				r = self.request(b'I', path.data)
+				r = self.request('path', path.data)
 				self.send(r)
+
+	@A2MXRequest
+	def disappear(self, path):
+		raise NotImplemented()
+
+	@A2MXRequest
+	def flush(self, node):
+		raise NotImplemented()
+
+	@A2MXRequest
+	def send(self, node, data):
+		raise NotImplemented()
 
 class A2MXPath():
 	def __init__(self, endnode=None, lasthop=None, signature=None, data=None):
@@ -290,9 +302,9 @@ class A2MXPath():
 		return 'Endnode: {} Lasthop: {}'.format(ECC.b58(self.endnode.pubkey_hash()).decode('ascii'), ECC.b58(self.lasthop.pubkey_hash()).decode('ascii'))
 
 class A2MXNode():
-	def __init__(self):
-		self.rlist = []
-		self.wlist = []
+	def __init__(self, selectloop):
+		self.selectloop = selectloop
+
 		self.paths = {}
 		self.streams = []
 		try:
@@ -314,7 +326,56 @@ class A2MXNode():
 				f.write(self.ecc.get_privkey())
 			with open('.a2mx/pub', 'wb') as f:
 				f.write(self.ecc.get_pubkey())
-		print("I am", ECC.b58(self.ecc.pubkey_hash()).decode('ascii'))
+		mypub = ECC.b58(self.ecc.pubkey_hash()).decode('ascii')
+		if sys.stdout.isatty():
+			cwd = os.getcwd().rsplit('/', 1)[1]
+			sys.stdout.write("\x1b]2;{}: {}\x07".format(cwd, mypub))
+		print("I am", mypub)
+
+	def add(self, selectable):
+		self.selectloop.add(selectable)
+	def remove(self, selectable):
+		self.selectloop.remove(selectable)
+	def wadd(self, selectable):
+		self.selectloop.wadd(selectable)
+	def wremove(self, selectable):
+		self.selectloop.wremove(selectable)
+
+	def add_stream(self, stream):
+		assert stream not in self.streams
+		self.streams.append(stream)
+	def del_stream(self, stream):
+		assert stream in self.streams
+		self.streams.remove(stream)
+
+	def new_path(self, path):
+		# save path
+		endpub = bytes(path.endnode.pubkey_c())
+		try:
+			pathlist = self.paths[endpub]
+		except KeyError:
+			self.paths[endpub] = []
+			pathlist = self.paths[endpub]
+			print("node discovered", ECC.b58(path.endnode.pubkey_hash()).decode('ascii'))
+		if path not in pathlist:
+			pathlist.append(path)
+		else:
+			return
+
+		print("new_path", path)
+		try:
+			stream = path.stream
+		except AttributeError:
+			stream = None
+		for ostream in self.streams:
+			if ostream == stream:
+				continue
+			ostream.send(ostream.request('path', path.data))
+
+class SelectLoop():
+	def __init__(self):
+		self.rlist = []
+		self.wlist = []
 
 	def add(self, selectable):
 		self.rlist.append(selectable)
@@ -336,36 +397,9 @@ class A2MXNode():
 		for sock in set(self.rlist + self.wlist):
 			sock.finish()
 
-	def add_stream(self, stream):
-		assert stream not in self.streams
-		self.streams.append(stream)
-	def del_stream(self, stream):
-		assert stream in self.streams
-		self.streams.remove(stream)
+selectloop = SelectLoop()
 
-	def new_path(self, path):
-		# save path
-		endpub = bytes(path.endnode.pubkey_c())
-		try:
-			pathlist = self.paths[endpub]
-		except KeyError:
-			self.paths[endpub] = []
-			pathlist = self.paths[endpub]
-			print("new node discovered", ECC.b58(path.endnode.pubkey_hash()).decode('ascii'))
-		if path not in pathlist:
-			pathlist.append(path)
-		else:
-			return
-
-		print("new_path", path)
-		try:
-			stream = path.stream
-		except AttributeError:
-			stream = None
-		for ostream in self.streams:
-			ostream.send(ostream.request(b'I', path.data))
-
-node = A2MXNode()
+node = A2MXNode(selectloop)
 for bind in config['bind']:
 	server = A2MXServer(node, bind)
 
@@ -375,7 +409,7 @@ for uri in config['targets']:
 
 try:
 	while True:
-		node.select()
+		selectloop.select()
 except KeyboardInterrupt:
-	node.shutdown()
+	selectloop.shutdown()
 
