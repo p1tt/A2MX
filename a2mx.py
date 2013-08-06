@@ -62,10 +62,13 @@ class A2MXStream():
 		assert (uri == None and sock != None) or (uri != None and sock == None)
 		self.node = node
 		self.uri = uri
+		self.send = self.raw_send
 		self.__connected = False
 		self.remote_ecc = None
 		self.__remote_auth = False
 		self.__pub_sent = False
+		self.incoming_path = None
+		self.outgoing_path = None
 		if sock:
 			self.sock = sock
 			self.sock.setblocking(0)
@@ -127,8 +130,7 @@ class A2MXStream():
 			self.__send_pub()
 
 	def __send_pub(self):
-		ecc = self.node.ecc
-		self.send(ecc.pubkey_c())
+		self.send(self.node.ecc.pubkey_c())
 		self.__pub_sent = True
 
 	def getlength(self, length):
@@ -151,7 +153,6 @@ class A2MXStream():
 			self.remote_ecc = ECC(pubkey_x=pubkey_x, pubkey_y=pubkey_y)
 
 			# ok we have the remote public key, from now on we send everything encrypted
-			self.__raw_send = self.send
 			self.send = self.encrypted_send
 
 			if not self.__pub_sent:	# send our public key if we haven't already
@@ -168,6 +169,7 @@ class A2MXStream():
 			print("connection up with", ECC.b58(self.remote_ecc.pubkey_hash()).decode('ascii'))
 
 			p = A2MXPath(ecc, self.remote_ecc)
+			self.incoming_path = p
 			self.node.new_path(p)
 			if self.uri != None:
 				r = self.request('pull')
@@ -214,14 +216,17 @@ class A2MXStream():
 			data += arg
 		return struct.pack('>L', len(data)) + data
 
-	def send(self, data):
-		self.sock.send(struct.pack('>L', len(data)), socket.MSG_MORE)
-		self.sock.send(data)
+	def raw_send(self, data):
+		try:
+			self.sock.send(struct.pack('>L', len(data)), socket.MSG_MORE)
+			self.sock.send(data)
+		except (ConnectionResetError, BrokenPipeError):
+			self.finish()
 
 	def encrypted_send(self, *data):
 		data = b''.join(data)
 		data = self.node.ecc.encrypt(data, self.remote_ecc.get_pubkey())
-		self.__raw_send(data)
+		self.raw_send(data)
 
 	def finish(self):
 		print("finish")
@@ -232,6 +237,8 @@ class A2MXStream():
 	@A2MXRequest
 	def path(self, path):
 		p = A2MXPath(data=path)
+		if p.lasthop.get_pubkey() == self.node.ecc.get_pubkey() and p.endnode.get_pubkey() == self.remote_ecc.get_pubkey():
+			self.outgoing_path = p
 		p.stream = self
 		self.node.new_path(p)
 
@@ -244,14 +251,15 @@ class A2MXStream():
 
 	@A2MXRequest
 	def disappear(self, path):
-		raise NotImplemented()
+		p = A2MXPath(data=path)
+		self.node.del_path(p)
 
 	@A2MXRequest
 	def flush(self, node):
 		raise NotImplemented()
 
 	@A2MXRequest
-	def send(self, node, data):
+	def sendto(self, node, data):
 		raise NotImplemented()
 
 class A2MXPath():
@@ -292,6 +300,10 @@ class A2MXPath():
 	@property
 	def data(self):
 		return self.endnode.pubkey_c() + self.lasthop.pubkey_c() + self.signature
+
+	@property
+	def endpub(self):
+		return bytes(self.endnode.pubkey_c())
 
 	def __eq__(self, other):
 		if not isinstance(other, A2MXPath):
@@ -347,10 +359,12 @@ class A2MXNode():
 	def del_stream(self, stream):
 		assert stream in self.streams
 		self.streams.remove(stream)
+		self.del_path(stream.incoming_path)
+		self.del_path(stream.outgoing_path)
 
 	def new_path(self, path):
 		# save path
-		endpub = bytes(path.endnode.pubkey_c())
+		endpub = path.endpub
 		try:
 			pathlist = self.paths[endpub]
 		except KeyError:
@@ -371,6 +385,15 @@ class A2MXNode():
 			if ostream == stream:
 				continue
 			ostream.send(ostream.request('path', path.data))
+
+	def del_path(self, path):
+		try:
+			self.paths[path.endpub].remove(path)
+		except ValueError:
+			return
+		print("del_path", path)
+		for ostream in self.streams:
+			ostream.send(ostream.request('disappear', path.data))
 
 class SelectLoop():
 	def __init__(self):
