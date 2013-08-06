@@ -1,6 +1,8 @@
 import pyelliptic
 import hashlib
 
+b58chars = b'123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
 class ECC(pyelliptic.ECC):
 	def __init__(self, pubkey=None, privkey=None, pubkey_x=None, pubkey_y=None):
 		pyelliptic.ECC.__init__(self, curve='secp521r1', pubkey=pubkey, privkey=privkey, pubkey_x=pubkey_x, pubkey_y=pubkey_y)
@@ -34,14 +36,25 @@ class ECC(pyelliptic.ECC):
 
 	@staticmethod
 	def b58(value):
-		b58chars = b'123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-
-		inputnum = 0
-		for i in range(0, len(value)):
-		        inputnum += ord(value[-i-1:len(value)-i]) * 256 ** i
+		inputnum = int.from_bytes(value, byteorder='big')
 		b58part = b''
 		while inputnum > 0:
-			b58part = b58chars[inputnum % 58:(inputnum % 58) + 1] + b58part
+			idx = inputnum % 58
+			b58part = b58chars[idx:idx + 1] + b58part
 			inputnum //= 58
 		return b58part
 
+	@staticmethod
+	def b58decode(b58string):
+		outputnum = 0
+		for char in b58string:
+			outputnum *= 58
+			outputnum += b58chars.index(char)
+		return outputnum.to_bytes((outputnum.bit_length() // 8) + 1, byteorder='big')
+
+if __name__ == '__main__':
+	with open("/dev/urandom","rb") as f:
+		test = f.read(20083)
+	b58 = ECC.b58(test)
+	b58test = ECC.b58decode(b58)
+	assert test == b58test
