@@ -1,7 +1,8 @@
 config = {
 	'bind': [ ('', 2594) ],
 	'publish_axuri': None,
-	'targets': []
+	'targets': [],
+	'client_interface': False,
 }
 
 try:

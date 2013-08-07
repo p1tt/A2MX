@@ -303,11 +303,11 @@ class A2MXPath():
 
 	@property
 	def endpub(self):
-		return bytes(self.endnode.pubkey_c())
+		return self.endnode.pubkey_hash()
 
 	def __eq__(self, other):
 		if not isinstance(other, A2MXPath):
-			raise TypeError()
+			return False
 		return self.endnode.get_pubkey() == other.endnode.get_pubkey() and self.lasthop.get_pubkey() == other.lasthop.get_pubkey()
 
 	def __str__(self):
@@ -429,6 +429,11 @@ for bind in config['bind']:
 for uri in config['targets']:
 	print("connect to", uri)
 	c = A2MXStream(node, uri=uri)
+
+if config['client_interface']:
+	from clientinterface import A2MXXMLRPCServer
+	xmlrpcserver = A2MXXMLRPCServer(node, config['client_interface'])
+	selectloop.add(xmlrpcserver)
 
 try:
 	while True:

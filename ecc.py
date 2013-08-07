@@ -50,11 +50,14 @@ class ECC(pyelliptic.ECC):
 		for char in b58string:
 			outputnum *= 58
 			outputnum += b58chars.index(char)
-		return outputnum.to_bytes((outputnum.bit_length() // 8) + 1, byteorder='big')
+		length = outputnum.bit_length() // 8
+		if outputnum.bit_length() % 8 != 0:
+			length += 1
+		return outputnum.to_bytes(length, byteorder='big')
 
 if __name__ == '__main__':
 	with open("/dev/urandom","rb") as f:
-		test = f.read(20083)
+		test = f.read(2048)
 	b58 = ECC.b58(test)
 	b58test = ECC.b58decode(b58)
 	assert test == b58test
