@@ -101,7 +101,7 @@ class A2MXStream():
 	def select_r(self):
 		try:
 			data = self.sock.recv(4096)
-		except ConnectionResetError:
+		except (ConnectionResetError, OSError):
 			data = False
 		if not data:
 			self.finish()
