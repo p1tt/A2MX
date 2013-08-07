@@ -43,16 +43,6 @@ class A2MXClientInterface():
 
 		return [ p for p in find_path(pathlist) ]
 
-		pi = 0
-		for p in find_path(pathlist):
-			s = 'path {}:'.format(pi)
-			for hop in p:
-				s+= ' ' + ECC.b58(hop).decode('ascii')
-			print(s)
-			pi += 1
-
-		return True
-
 class A2MXXMLRPCServer(SimpleXMLRPCServer):
 	def __init__(self, node, bind):
 		SimpleXMLRPCServer.__init__(self, bind, logRequests=False)
