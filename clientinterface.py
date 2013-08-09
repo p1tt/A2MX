@@ -7,12 +7,16 @@ class A2MXClientInterface():
 		self.node = node
 
 	def find_routes(self, destination, maxroutes=None, minhops=None, maxhops=None):
-		routes = []
-		maxroutes = None if maxroutes == None or maxroutes == '-' else int(maxroutes)
-		minhops = None if minhops == None or minhops == '-' else int(minhops)
-		maxhops = None if maxhops == None or maxhops == '-' else int(maxhops)
 		try:
-			for route in self._find_routes(destination, maxhops):
+			routes = []
+			maxroutes = None if maxroutes == None or maxroutes == '-' else int(maxroutes)
+			minhops = None if minhops == None or minhops == '-' else int(minhops)
+			maxhops = None if maxhops == None or maxhops == '-' else int(maxhops)
+
+			me = self.node.ecc.pubkey_hash()
+			destination = ECC.b58decode(destination.encode('ascii'))
+
+			for route in self._find_routes_from(me, destination, maxhops):
 				if minhops != None and len(route) < minhops:
 					continue
 				routes.append(route)
@@ -23,11 +27,30 @@ class A2MXClientInterface():
 			traceback.print_exc()
 		return routes
 
-	def _find_routes(self, destination, maxhops):
-		dst = ECC.b58decode(destination.encode('ascii'))
+	def find_routes_from(self, source, destination, maxroutes=None, minhops=None, maxhops=None):
+		try:
+			routes = []
+			maxroutes = None if maxroutes == None or maxroutes == '-' else int(maxroutes)
+			minhops = None if minhops == None or minhops == '-' else int(minhops)
+			maxhops = None if maxhops == None or maxhops == '-' else int(maxhops)
+
+			source = ECC.b58decode(source.encode('ascii'))
+			destination = ECC.b58decode(destination.encode('ascii'))
+
+			for route in self._find_routes_from(source, destination, maxhops):
+				if minhops != None and len(route) < minhops:
+					continue
+				routes.append(route)
+				if maxroutes != None and len(routes) >= maxroutes:
+					break
+		except Exception as e:
+			import traceback
+			traceback.print_exc()
+		return routes
+
+	def _find_routes_from(self, src, dst, maxhops):
 		if dst not in self.node.paths:
 			return []
-		me = self.node.ecc.pubkey_hash()
 		pathlist = self.node.paths[dst]
 		if len(pathlist) == 0:
 			return []
@@ -39,7 +62,7 @@ class A2MXClientInterface():
 				thispath = [dst]
 			for path in pathlist:
 				lasthop = path.lasthop.pubkey_hash()
-				if lasthop == me:
+				if lasthop == src:
 					ytp = thispath[:]
 					ytp.append(lasthop)
 					yield ytp

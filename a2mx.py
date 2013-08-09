@@ -5,6 +5,7 @@ import socket
 import select
 import struct
 import os
+import datetime
 
 from ecc import ECC
 
@@ -48,7 +49,7 @@ class A2MXServer():
 	def select_e(self):
 		assert False
 
-	def finish(self):
+	def shutdown(self):
 		self.sock.close()
 		self.node.remove(self)
 
@@ -62,38 +63,47 @@ class A2MXStream():
 		assert (uri == None and sock != None) or (uri != None and sock == None)
 		self.node = node
 		self.uri = uri
+
 		self.send = self.raw_send
-		self.__connected = False
 		self.remote_ecc = None
+		self.__connected = False
 		self.__remote_auth = False
 		self.__pub_sent = False
 		self.incoming_path = None
 		self.outgoing_path = None
+
 		if sock:
 			self.sock = sock
 			self.sock.setblocking(0)
 			self.connected()
 		elif uri != None:
-			assert uri.startswith('ax://')
-			self.uri = uri
-			hostport = uri[5:].split(':')
-			assert len(hostport) >= 1
-			host = hostport[0]
-			if len(hostport) == 1:
-				port = 0xA22
-			elif len(hostport) == 2:
-				port = int(hostport[1])
-			else:
-				assert False
+			self.connect()
+		else:
+			raise ValueError('Invalid arguments to A2MXStream')
 
-			self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-			self.sock.setblocking(0)
-			try:
-				self.sock.connect((host, port))
-			except BlockingIOError as e:
-				if e.errno != 115:
-					raise
-			self.node.wadd(self)
+	def connect(self):
+		uri = self.uri
+		assert uri.startswith('ax://')
+		hostport = uri[5:].split(':')
+		assert len(hostport) >= 1
+		host = hostport[0]
+		if len(hostport) == 1:
+			port = 0xA22
+		elif len(hostport) == 2:
+			port = int(hostport[1])
+		else:
+			assert False
+
+		print("connect to", self.uri)
+
+		self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		self.sock.setblocking(0)
+		self.node.wadd(self)
+		try:
+			self.sock.connect((host, port))
+		except BlockingIOError as e:
+			if e.errno != 115:
+				raise
 
 	def fileno(self):
 		return self.sock.fileno()
@@ -104,11 +114,15 @@ class A2MXStream():
 		except (ConnectionResetError, OSError):
 			data = False
 		if not data:
-			self.finish()
+			self.connectionfailure()
 			return
 		self.data += data
 		while len(self.data) >= self.handler[0]:
 			self.handler[1](self.handler[0])
+			if not self.__connected:
+				import traceback
+				print("breaking")
+				break
 
 	def select_w(self):
 		if not self.__connected:
@@ -119,14 +133,14 @@ class A2MXStream():
 
 	def select_e(self):
 		print("select_e")
-		self.finish()
+		self.connectionfailure()
 
 	def connected(self):
 		self.__connected = True
 		self.data = bytearray()
 		self.handler = (4, self.getlength)
 		self.node.add(self)
-		if self.uri != None:
+		if self.uri:
 			self.__send_pub()
 
 	def __send_pub(self):
@@ -217,22 +231,43 @@ class A2MXStream():
 		return struct.pack('>L', len(data)) + data
 
 	def raw_send(self, data):
+		if not self.__connected:
+			return False
 		try:
 			self.sock.send(struct.pack('>L', len(data)), socket.MSG_MORE)
 			self.sock.send(data)
-		except (ConnectionResetError, BrokenPipeError):
-			self.finish()
+			return True
+		except (ConnectionResetError, BrokenPipeError, ConnectionRefusedError):
+			self.connectionfailure()
+		return False
 
 	def encrypted_send(self, *data):
+		if not self.__connected:
+			return False
 		data = b''.join(data)
 		data = self.node.ecc.encrypt(data, self.remote_ecc.get_pubkey())
-		self.raw_send(data)
+		return self.raw_send(data)
 
-	def finish(self):
-		print("finish")
+	def shutdown(self):
 		self.sock.close()
 		self.node.del_stream(self)
 		self.node.remove(self)
+
+		self.send = self.raw_send
+		self.remote_ecc = None
+		self.__connected = False
+		self.__remote_auth = False
+		self.__pub_sent = False
+		self.incoming_path = None
+		self.outgoing_path = None
+
+		self.data = None
+
+	def connectionfailure(self):
+		self.shutdown()
+		print(self.uri, "connection failure")
+		if self.uri:
+			self.node.selectloop.tadd(5, self.connect)
 
 	@A2MXRequest
 	def path(self, path):
@@ -357,7 +392,8 @@ class A2MXNode():
 		assert stream not in self.streams
 		self.streams.append(stream)
 	def del_stream(self, stream):
-		assert stream in self.streams
+		if stream not in self.streams:
+			return
 		self.streams.remove(stream)
 		self.del_path(stream.incoming_path)
 		self.del_path(stream.outgoing_path)
@@ -399,26 +435,50 @@ class SelectLoop():
 	def __init__(self):
 		self.rlist = []
 		self.wlist = []
+		self.tlist = []
 
 	def add(self, selectable):
 		self.rlist.append(selectable)
 	def remove(self, selectable):
-		self.rlist.remove(selectable)
+		try:
+			self.rlist.remove(selectable)
+		except ValueError:
+			pass
 	def wadd(self, selectable):
 		self.wlist.append(selectable)
 	def wremove(self, selectable):
-		self.wlist.remove(selectable)
+		try:
+			self.wlist.remove(selectable)
+		except ValueError:
+			pass
+	def tadd(self, seconds, call, *args, **kwargs):
+		callat = datetime.datetime.now() + datetime.timedelta(seconds=seconds)
+		self.tlist.append((callat, call, args, kwargs))
+		self.tlist.sort(key=lambda tup: tup[0])
+
 	def select(self):
-		r, w, e = select.select(self.rlist, self.wlist, self.rlist)
+		timeout = None
+		if len(self.tlist) > 0:
+			timeout = (self.tlist[0][0] - datetime.datetime.now()).total_seconds()
+			if timeout < 0:
+				timeout = 0
+		r, w, e = select.select(self.rlist, self.wlist, self.rlist, timeout)
 		for sock in e:
 			sock.select_e()
 		for sock in w:
 			sock.select_w()
 		for sock in r:
 			sock.select_r()
+		while len(self.tlist) > 0:
+			if self.tlist[0][0] <= datetime.datetime.now():
+				self.tlist[0][1](*self.tlist[0][2], **self.tlist[0][3])
+				del self.tlist[0]
+			else:
+				break
+
 	def shutdown(self):
 		for sock in set(self.rlist + self.wlist):
-			sock.finish()
+			sock.shutdown()
 
 selectloop = SelectLoop()
 
@@ -427,7 +487,6 @@ for bind in config['bind']:
 	server = A2MXServer(node, bind)
 
 for uri in config['targets']:
-	print("connect to", uri)
 	c = A2MXStream(node, uri=uri)
 
 if config['client_interface']:
