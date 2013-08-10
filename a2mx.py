@@ -120,8 +120,6 @@ class A2MXStream():
 		while len(self.data) >= self.handler[0]:
 			self.handler[1](self.handler[0])
 			if not self.__connected:
-				import traceback
-				print("breaking")
 				break
 
 	def select_w(self):
@@ -185,9 +183,6 @@ class A2MXStream():
 			p = A2MXPath(ecc, self.remote_ecc)
 			self.incoming_path = p
 			self.node.new_path(p)
-			if self.uri != None:
-				r = self.request('pull')
-				self.send(r)
 		else:
 			for d in self.parse(data):
 				fn = d[0].decode('UTF-8')
@@ -348,6 +343,19 @@ class A2MXPath():
 	def __str__(self):
 		return 'Endnode: {} Lasthop: {}'.format(ECC.b58(self.endnode.pubkey_hash()).decode('ascii'), ECC.b58(self.lasthop.pubkey_hash()).decode('ascii'))
 
+class A2MXRoute():
+	def __init__(self, routes):
+		self.routes = routes
+
+	def __len__(self):
+		return len(self.routes)
+
+	def __str__(self):
+		s = 'A2MXRoute'
+		for r in self.routes:
+			s += ' ' + ECC.b58(r).decode('ascii')
+		return s
+
 class A2MXNode():
 	def __init__(self, selectloop):
 		self.selectloop = selectloop
@@ -391,12 +399,18 @@ class A2MXNode():
 	def add_stream(self, stream):
 		assert stream not in self.streams
 		self.streams.append(stream)
+
+		if len(self.paths) == 0:
+			r = stream.request('pull')
+			stream.send(r)
+
 	def del_stream(self, stream):
 		if stream not in self.streams:
 			return
 		self.streams.remove(stream)
 		self.del_path(stream.incoming_path)
-		self.del_path(stream.outgoing_path)
+		if stream.outgoing_path:
+			self.del_path(stream.outgoing_path)
 
 	def new_path(self, path):
 		# save path
@@ -420,16 +434,60 @@ class A2MXNode():
 		for ostream in self.streams:
 			if ostream == stream:
 				continue
+			if not path.lasthop.pubkey_hash() == self.ecc.pubkey_hash():
+				route2me = self.shortest_route(path.lasthop.pubkey_hash(), self.ecc.pubkey_hash())
+				route2o = self.shortest_route(path.lasthop.pubkey_hash(), ostream.remote_ecc.pubkey_hash())
+				if len(route2me) != 0 and len(route2o) != 0 and len(route2me) >= len(route2o):
+					continue
+			print("sending", path, "to", ECC.b58(ostream.remote_ecc.pubkey_hash()).decode('ascii'))
 			ostream.send(ostream.request('path', path.data))
 
 	def del_path(self, path):
 		try:
 			self.paths[path.endpub].remove(path)
-		except ValueError:
+		except (ValueError, KeyError):
 			return
 		print("del_path", path)
 		for ostream in self.streams:
 			ostream.send(ostream.request('disappear', path.data))
+
+	def find_routes_from(self, src, dst, maxhops=None):
+		if dst not in self.paths:
+			return []
+		pathlist = self.paths[dst]
+		if len(pathlist) == 0:
+			return []
+
+		def find_path(pathlist, thispath=None, step=1):
+			if maxhops != None and step >= maxhops:
+				return
+			if thispath == None:
+				thispath = [dst]
+			for path in pathlist:
+				lasthop = path.lasthop.pubkey_hash()
+				if lasthop == src:
+					ytp = thispath[:]
+					ytp.append(lasthop)
+					yield A2MXRoute(ytp)
+					continue
+				if lasthop == dst:
+					continue
+				if lasthop in thispath:
+					continue
+				tp = thispath[:]
+				tp.append(lasthop)
+				for p in find_path(self.paths[lasthop], tp, step+1):
+					yield p
+		return find_path(pathlist)
+
+	def shortest_route(self, src, dst):
+		try:
+			routes = [ x for x in self.find_routes_from(src, dst) ]
+		except KeyError:
+			return A2MXRoute([])
+		if len(routes) == 0:
+			return A2MXRoute([])
+		return min(routes, key=len)
 
 class SelectLoop():
 	def __init__(self):

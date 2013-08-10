@@ -91,5 +91,5 @@ class A2MXXMLRPCServer(SimpleXMLRPCServer):
 	def select_e(self):
 		assert False
 
-	def finish(self):
+	def shutdown(self):
 		pass
