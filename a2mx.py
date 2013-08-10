@@ -424,6 +424,7 @@ class A2MXNode():
 		if path not in pathlist:
 			pathlist.append(path)
 		else:
+			print("path", path, "known. ignoring.")
 			return
 
 		print("new_path", path)
@@ -434,11 +435,17 @@ class A2MXNode():
 		for ostream in self.streams:
 			if ostream == stream:
 				continue
-			if not path.lasthop.pubkey_hash() == self.ecc.pubkey_hash():
-				route2me = self.shortest_route(path.lasthop.pubkey_hash(), self.ecc.pubkey_hash())
-				route2o = self.shortest_route(path.lasthop.pubkey_hash(), ostream.remote_ecc.pubkey_hash())
-				if len(route2me) != 0 and len(route2o) != 0 and len(route2me) >= len(route2o):
-					continue
+			elif stream != None and not path.lasthop.pubkey_hash() == self.ecc.pubkey_hash():
+				route2me = len(self.shortest_route(path.lasthop.pubkey_hash(), self.ecc.pubkey_hash())) + 1
+				route2o = len(self.shortest_route(path.lasthop.pubkey_hash(), ostream.remote_ecc.pubkey_hash()))
+				if route2me != 0 and route2o != 0:
+					if route2me > route2o:
+						print("NOT sending", path, "to", ECC.b58(ostream.remote_ecc.pubkey_hash()).decode('ascii'))
+						continue
+					elif route2me == route2o:
+						if self.ecc.pubkey_hash() > ostream.remote_ecc.pubkey_hash():
+							print("NOT sending", path, "to", ECC.b58(ostream.remote_ecc.pubkey_hash()).decode('ascii'), "pubkey hash bigger")
+							continue
 			print("sending", path, "to", ECC.b58(ostream.remote_ecc.pubkey_hash()).decode('ascii'))
 			ostream.send(ostream.request('path', path.data))
 
