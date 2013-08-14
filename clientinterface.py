@@ -80,6 +80,13 @@ class A2MXClientInterface():
 		return find_path(pathlist)
 
 	def dump_paths(self):
+		try:
+			return self._dump_paths()
+		except Exception as e:
+			import traceback
+			traceback.print_exc()
+
+	def _dump_paths(self):
 		print("dump_paths")
 		l = sorted(self.node.paths.keys())
 		s = b''
@@ -88,7 +95,7 @@ class A2MXClientInterface():
 			print(ECC.b58(k).decode('ascii'))
 			s += k
 			for p in v:
-				s += p.data
+				s += p.endpub + p.lasthop.pubkey_hash()
 				print("  ", p)
 		print("SHA256", hashlib.sha256(s).hexdigest())
 		return 0

@@ -3,6 +3,8 @@ config = {
 	'publish_axuri': None,
 	'targets': [],
 	'client_interface': False,
+	'connections': 5,
+	'max_connections': 10,
 }
 
 try:

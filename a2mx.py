@@ -34,7 +34,7 @@ class A2MXServer():
 		self.sock.setblocking(0)
 		self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		self.sock.bind(bind)
-		print("bound to", bind)
+		print("bound to", bind, config['publish_axuri'])
 		self.sock.listen(5)
 		self.node.add(self)
 
@@ -180,9 +180,9 @@ class A2MXStream():
 				raise InvalidDataException('failed to verify remote')
 			self.__remote_auth = True
 			self.node.add_stream(self)
-			print("connection up with", ECC.b58(self.remote_ecc.pubkey_hash()).decode('ascii'))
+			print("incoming" if self.uri == None else "outgoing", "connection up with", ECC.b58(self.remote_ecc.pubkey_hash()).decode('ascii'))
 
-			p = A2MXPath(ecc, self.remote_ecc)
+			p = A2MXPath(ecc, self.remote_ecc, axuri=config['publish_axuri'])
 			self.incoming_path = p
 			self.node.new_path(p)
 		else:
@@ -200,18 +200,17 @@ class A2MXStream():
 
 	@staticmethod
 	def parse(data):
-		d = BSON.decode(data)
-		print(d)
+		d = BSON.decode(data, tz_aware=True)
 		return d
 
 	@staticmethod
 	def checkvalue(value):
 		if isinstance(value, bytearray):
 			return bytes(value)
-		elif isinstance(value, (bytes, str, datetime.datetime)):
+		elif isinstance(value, (bytes, str, datetime.datetime, type(None))):
 			return value
 		else:
-			raise ValueError('Invalid type in args')
+			raise ValueError('Invalid type in args {} = {}'.format(type(value), value))
 
 	@staticmethod
 	def request(fn, *args, **kwargs):
@@ -232,11 +231,10 @@ class A2MXStream():
 			self.connectionfailure()
 		return False
 
-	def encrypted_send(self, *data):
+	def encrypted_send(self, data):
 		if not self.__connected:
 			return False
-		data = b''.join(data)
-		data = self.node.ecc.encrypt(data, self.remote_ecc.get_pubkey())
+		data = self.node.ecc.encrypt(bytes(data), self.remote_ecc.get_pubkey())
 		return self.raw_send(data)
 
 	def shutdown(self):
@@ -261,9 +259,10 @@ class A2MXStream():
 			self.node.selectloop.tadd(5, self.connect)
 
 	@A2MXRequest
-	def path(self, path):
-		p = A2MXPath(data=path)
+	def path(self, **kwargs):
+		p = A2MXPath(**kwargs)
 		if p.lasthop.get_pubkey() == self.node.ecc.get_pubkey() and p.endnode.get_pubkey() == self.remote_ecc.get_pubkey():
+			print("outgoing_path", p)
 			self.outgoing_path = p
 		p.stream = self
 		self.node.new_path(p)
@@ -273,7 +272,7 @@ class A2MXStream():
 		print("pull from", ECC.b58(self.remote_ecc.pubkey_hash()).decode('ascii'))
 		for pathlist in self.node.paths.values():
 			for path in pathlist:
-				r = self.request('path', path.data)
+				r = self.request('path', **path.data)
 				self.send(r)
 		self.send_updates = True
 
@@ -282,11 +281,10 @@ class A2MXStream():
 		if not self.node.update_stream == self:
 			print("decline on non update stream.")
 			return
-		
 
 	@A2MXRequest
-	def disappear(self, path):
-		p = A2MXPath(data=path)
+	def disappear(self, **kwargs):
+		p = A2MXPath(**kwargs)
 		self.node.del_path(p)
 
 	@A2MXRequest
@@ -298,16 +296,7 @@ class A2MXStream():
 		raise NotImplemented()
 
 class A2MXPath():
-	def __init__(self, endnode=None, lasthop=None, signature=None, data=None):
-		if (endnode == None and lasthop == None and signature == None and data != None):
-			endnode = data[:68]
-			lasthop = data[68:2*68]
-			signature = data[2*68:]
-		elif (endnode != None and lasthop != None and data == None):
-			pass
-		else:
-			raise ValueError()
-
+	def __init__(self, endnode=None, lasthop=None, signature=None, timestamp=None, axuri=None):
 		if not isinstance(lasthop, ECC):
 			self.lasthop = ECC()
 			self.lasthop.pubkey_x, self.lasthop.pubkey_y = self.lasthop.key_uncompress(lasthop)
@@ -322,7 +311,9 @@ class A2MXPath():
 		else:
 			self.endnode = endnode
 
-		sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey()))
+		self.timestamp = BSON.decode(BSON.encode({'t': datetime.datetime.now(datetime.timezone.utc)}), tz_aware=True)['t'] if timestamp == None else timestamp
+
+		sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey(), self.timestamp.isoformat().encode('ascii')))
 		if signature == None:
 			self.signature = self.endnode.sign(sigdata)
 		else:
@@ -332,10 +323,11 @@ class A2MXPath():
 
 			self.signature = signature
 		self.stream = None
+		self.axuri = axuri
 
 	@property
 	def data(self):
-		return self.endnode.pubkey_c() + self.lasthop.pubkey_c() + self.signature
+		return { 'endnode': self.endnode.pubkey_c(), 'lasthop': self.lasthop.pubkey_c(), 'signature': self.signature, 'axuri': self.axuri, 'timestamp': self.timestamp }
 
 	@property
 	def endpub(self):
@@ -346,8 +338,13 @@ class A2MXPath():
 			return False
 		return self.endnode.get_pubkey() == other.endnode.get_pubkey() and self.lasthop.get_pubkey() == other.lasthop.get_pubkey()
 
+	def __gt__(self, other):
+		if not isinstance(other, A2MXPath):
+			raise ValueError()
+		return self.endnode.get_pubkey() > other.endnode.get_pubkey() or (self.endnode.get_pubkey() == other.endnode.get_pubkey() and self.lasthop.get_pubkey() > other.lasthop.get_pubkey())
+
 	def __str__(self):
-		return 'Endnode: {} Lasthop: {}'.format(ECC.b58(self.endnode.pubkey_hash()).decode('ascii'), ECC.b58(self.lasthop.pubkey_hash()).decode('ascii'))
+		return 'Endnode: {} Lasthop: {} URI: {} Timestamp: {}'.format(ECC.b58(self.endnode.pubkey_hash()).decode('ascii'), ECC.b58(self.lasthop.pubkey_hash()).decode('ascii'), self.axuri, self.timestamp.isoformat())
 
 class A2MXRoute():
 	def __init__(self, routes):
@@ -431,22 +428,38 @@ class A2MXNode():
 		endpub = path.endpub
 		try:
 			pathlist = self.paths[endpub]
+			if len(pathlist) == 0:	# HACK :)
+				raise KeyError()
 		except KeyError:
 			self.paths[endpub] = []
 			pathlist = self.paths[endpub]
 			print("node discovered", ECC.b58(path.endnode.pubkey_hash()).decode('ascii'))
+			if len(self.streams) < config['connections'] and path.axuri != None and path.endpub != self.ecc.pubkey_hash():
+				already_connected = False
+				for stream in self.streams:
+					if stream.remote_ecc.pubkey_hash() == path.endnode.pubkey_hash():
+						already_connected = True
+						break
+				if not already_connected:
+					A2MXStream(self, uri=path.axuri)
 		if path not in pathlist:
 			pathlist.append(path)
+			pathlist.sort()
 		else:
-			print("path", path, "known. ignoring.")
-			return
+			index = pathlist.index(path)
+			if path.timestamp <= pathlist[index].timestamp:
+				print("path", path, "known. ignoring.")
+				return
+			else:
+				print("updating path", path)
+				pathlist[index] = path
 
 		print("new_path", path)
 		for ostream in self.streams:
 			if ostream == path.stream or (not ostream.send_updates and ostream != self.update_stream):
 				continue
 			print("sending", path, "to", ECC.b58(ostream.remote_ecc.pubkey_hash()).decode('ascii'))
-			ostream.send(ostream.request('path', path.data))
+			ostream.send(ostream.request('path', **path.data))
 
 	def del_path(self, path):
 		try:
@@ -455,7 +468,7 @@ class A2MXNode():
 			return
 		print("del_path", path)
 		for ostream in self.streams:
-			ostream.send(ostream.request('disappear', path.data))
+			ostream.send(ostream.request('disappear', **path.data))
 
 	def find_routes_from(self, src, dst, maxhops=None):
 		if dst not in self.paths:
@@ -548,10 +561,10 @@ selectloop = SelectLoop()
 
 node = A2MXNode(selectloop)
 for bind in config['bind']:
-	server = A2MXServer(node, bind)
+	A2MXServer(node, bind)
 
 for uri in config['targets']:
-	c = A2MXStream(node, uri=uri)
+	A2MXStream(node, uri=uri)
 
 if config['client_interface']:
 	from clientinterface import A2MXXMLRPCServer
