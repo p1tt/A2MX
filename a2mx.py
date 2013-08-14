@@ -8,6 +8,7 @@ import os
 import datetime
 
 from ecc import ECC
+from bson import BSON
 
 from config import config
 
@@ -71,6 +72,7 @@ class A2MXStream():
 		self.__pub_sent = False
 		self.incoming_path = None
 		self.outgoing_path = None
+		self.send_updates = False
 
 		if sock:
 			self.sock = sock
@@ -184,46 +186,40 @@ class A2MXStream():
 			self.incoming_path = p
 			self.node.new_path(p)
 		else:
-			for d in self.parse(data):
-				fn = d[0].decode('UTF-8')
+			for fn, (args, kwargs) in self.parse(data).items():
 				try:
 					f = getattr(self, fn)
 				except AttributeError:
 					pass
 				else:
 					if hasattr(f, 'A2MXRequest__marker__') and f.A2MXRequest__marker__ == True:
-						f(*d[1:])
+						f(*args, **kwargs)
 						continue
 				print("Invalid request {}".format(fn))
 		self.handler = (4, self.getlength)
 
 	@staticmethod
 	def parse(data):
-		i = 0
-		while i < len(data):
-			requestLen = struct.unpack('>L', data[i:i+4])[0]
-			i += 4
-			ri = i
-			args = []
-			while ri < i + requestLen:
-				argLen = struct.unpack('>L', data[ri:ri+4])[0]
-				ri += 4
-				arg = data[ri:ri+argLen]
-				ri += argLen
-				args.append(arg)
-			i = ri
-			yield args
-		assert i == len(data)
+		d = BSON.decode(data)
+		print(d)
+		return d
 
 	@staticmethod
-	def request(*args):
-		data = b''
-		for arg in args:
-			if isinstance(arg, str):
-				arg = arg.encode('UTF-8')
-			data += struct.pack('>L', len(arg))
-			data += arg
-		return struct.pack('>L', len(data)) + data
+	def checkvalue(value):
+		if isinstance(value, bytearray):
+			return bytes(value)
+		elif isinstance(value, (bytes, str, datetime.datetime)):
+			return value
+		else:
+			raise ValueError('Invalid type in args')
+
+	@staticmethod
+	def request(fn, *args, **kwargs):
+		a = [ A2MXStream.checkvalue(arg) for arg in args ]
+		kw = {}
+		for k, v in kwargs.items():
+			kw[k] = A2MXStream.checkvalue(v)
+		return BSON.encode({fn: (a, kw)})
 
 	def raw_send(self, data):
 		if not self.__connected:
@@ -273,11 +269,20 @@ class A2MXStream():
 		self.node.new_path(p)
 
 	@A2MXRequest
-	def pull(self):
+	def pull(self, timestamp):
+		print("pull from", ECC.b58(self.remote_ecc.pubkey_hash()).decode('ascii'))
 		for pathlist in self.node.paths.values():
 			for path in pathlist:
 				r = self.request('path', path.data)
 				self.send(r)
+		self.send_updates = True
+
+	@A2MXRequest
+	def decline(self):
+		if not self.node.update_stream == self:
+			print("decline on non update stream.")
+			return
+		
 
 	@A2MXRequest
 	def disappear(self, path):
@@ -326,6 +331,7 @@ class A2MXPath():
 				raise InvalidDataException('signature failure')
 
 			self.signature = signature
+		self.stream = None
 
 	@property
 	def data(self):
@@ -362,6 +368,7 @@ class A2MXNode():
 
 		self.paths = {}
 		self.streams = []
+		self.update_stream = None
 		try:
 			with open('.a2mx/priv', 'rb') as f:
 				privkey = f.read()
@@ -400,14 +407,21 @@ class A2MXNode():
 		assert stream not in self.streams
 		self.streams.append(stream)
 
-		if len(self.paths) == 0:
-			r = stream.request('pull')
+		if self.update_stream == None:
+			self.update_stream = stream
+			r = stream.request('pull', datetime.datetime.min)
 			stream.send(r)
 
 	def del_stream(self, stream):
 		if stream not in self.streams:
 			return
 		self.streams.remove(stream)
+		if stream == self.update_stream:
+			if len(self.streams) == 0:
+				self.update_stream = None
+				print("no streams left for updates")
+			else:
+				self.update_stream = self.streams[0]
 		self.del_path(stream.incoming_path)
 		if stream.outgoing_path:
 			self.del_path(stream.outgoing_path)
@@ -428,24 +442,9 @@ class A2MXNode():
 			return
 
 		print("new_path", path)
-		try:
-			stream = path.stream
-		except AttributeError:
-			stream = None
 		for ostream in self.streams:
-			if ostream == stream:
+			if ostream == path.stream or (not ostream.send_updates and ostream != self.update_stream):
 				continue
-			elif stream != None and not path.lasthop.pubkey_hash() == self.ecc.pubkey_hash():
-				route2me = len(self.shortest_route(path.lasthop.pubkey_hash(), self.ecc.pubkey_hash())) + 1
-				route2o = len(self.shortest_route(path.lasthop.pubkey_hash(), ostream.remote_ecc.pubkey_hash()))
-				if route2me != 0 and route2o != 0:
-					if route2me > route2o:
-						print("NOT sending", path, "to", ECC.b58(ostream.remote_ecc.pubkey_hash()).decode('ascii'))
-						continue
-					elif route2me == route2o:
-						if self.ecc.pubkey_hash() > ostream.remote_ecc.pubkey_hash():
-							print("NOT sending", path, "to", ECC.b58(ostream.remote_ecc.pubkey_hash()).decode('ascii'), "pubkey hash bigger")
-							continue
 			print("sending", path, "to", ECC.b58(ostream.remote_ecc.pubkey_hash()).decode('ascii'))
 			ostream.send(ostream.request('path', path.data))
 
@@ -563,5 +562,6 @@ try:
 	while True:
 		selectloop.select()
 except KeyboardInterrupt:
-	selectloop.shutdown()
+#	selectloop.shutdown()
+	pass
 

@@ -1,4 +1,5 @@
 from xmlrpc.server import SimpleXMLRPCServer
+import hashlib
 
 from ecc import ECC
 
@@ -77,6 +78,20 @@ class A2MXClientInterface():
 					yield p
 
 		return find_path(pathlist)
+
+	def dump_paths(self):
+		print("dump_paths")
+		l = sorted(self.node.paths.keys())
+		s = b''
+		for k in l:
+			v = self.node.paths[k]
+			print(ECC.b58(k).decode('ascii'))
+			s += k
+			for p in v:
+				s += p.data
+				print("  ", p)
+		print("SHA256", hashlib.sha256(s).hexdigest())
+		return 0
 
 class A2MXXMLRPCServer(SimpleXMLRPCServer):
 	def __init__(self, node, bind):
