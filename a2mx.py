@@ -6,6 +6,7 @@ import select
 import struct
 import os
 import datetime
+import random
 
 from ecc import ECC
 from bson import BSON
@@ -73,6 +74,8 @@ class A2MXStream():
 		self.incoming_path = None
 		self.outgoing_path = None
 		self.send_updates = False
+		self.bytes_in = 0
+		self.bytes_out = 0
 
 		if sock:
 			self.sock = sock
@@ -82,6 +85,11 @@ class A2MXStream():
 			self.connect()
 		else:
 			raise ValueError('Invalid arguments to A2MXStream')
+
+	def __str__(self):
+		return '{} Remote: {} Updates: {} In: {}B Out: {}B{}'.format(
+			'Incoming' if self.uri == None else 'Outgoing', ECC.b58(self.remote_ecc.pubkey_hash()).decode('ascii'),
+			self.send_updates, self.bytes_in, self.bytes_out, ' disconnected' if not self.__connected else '')
 
 	def connect(self):
 		uri = self.uri
@@ -119,6 +127,7 @@ class A2MXStream():
 			self.connectionfailure()
 			return
 		self.data += data
+		self.bytes_in += len(data)
 		while len(self.data) >= self.handler[0]:
 			self.handler[1](self.handler[0])
 			if not self.__connected:
@@ -226,6 +235,7 @@ class A2MXStream():
 		try:
 			self.sock.send(struct.pack('>L', len(data)), socket.MSG_MORE)
 			self.sock.send(data)
+			self.bytes_out += len(data) + 4
 			return True
 		except (ConnectionResetError, BrokenPipeError, ConnectionRefusedError):
 			self.connectionfailure()
@@ -262,7 +272,6 @@ class A2MXStream():
 	def path(self, **kwargs):
 		p = A2MXPath(**kwargs)
 		if p.lasthop.get_pubkey() == self.node.ecc.get_pubkey() and p.endnode.get_pubkey() == self.remote_ecc.get_pubkey():
-			print("outgoing_path", p)
 			self.outgoing_path = p
 		p.stream = self
 		self.node.new_path(p)
@@ -390,6 +399,7 @@ class A2MXNode():
 			cwd = os.getcwd().rsplit('/', 1)[1]
 			sys.stdout.write("\x1b]2;{}: {}\x07".format(cwd, mypub))
 		print("I am", mypub)
+		self.selectloop.tadd(random.randint(5, 15), self.find_new_peers)
 
 	def add(self, selectable):
 		self.selectloop.add(selectable)
@@ -434,14 +444,6 @@ class A2MXNode():
 			self.paths[endpub] = []
 			pathlist = self.paths[endpub]
 			print("node discovered", ECC.b58(path.endnode.pubkey_hash()).decode('ascii'))
-			if len(self.streams) < config['connections'] and path.axuri != None and path.endpub != self.ecc.pubkey_hash():
-				already_connected = False
-				for stream in self.streams:
-					if stream.remote_ecc.pubkey_hash() == path.endnode.pubkey_hash():
-						already_connected = True
-						break
-				if not already_connected:
-					A2MXStream(self, uri=path.axuri)
 		if path not in pathlist:
 			pathlist.append(path)
 			pathlist.sort()
@@ -469,6 +471,27 @@ class A2MXNode():
 		print("del_path", path)
 		for ostream in self.streams:
 			ostream.send(ostream.request('disappear', **path.data))
+
+	def find_new_peers(self):
+		self.selectloop.tadd(random.randint(5, 15), self.find_new_peers)
+
+		if len(self.streams) >= config['connections']:
+			return
+
+		for pathlist in self.paths.values():
+			if len(pathlist) == 0:
+				continue
+			path = pathlist[0]
+
+			if path.axuri != None and path.endpub != self.ecc.pubkey_hash():
+				already_connected = False
+				for stream in self.streams:
+					if stream.remote_ecc.pubkey_hash() == path.endnode.pubkey_hash():
+						already_connected = True
+						break
+				if not already_connected:
+					A2MXStream(self, uri=path.axuri)
+					break
 
 	def find_routes_from(self, src, dst, maxhops=None):
 		if dst not in self.paths:

@@ -100,6 +100,12 @@ class A2MXClientInterface():
 		print("SHA256", hashlib.sha256(s).hexdigest())
 		return 0
 
+	def dump_streams(self):
+		print("dump_streams")
+		for stream in self.node.streams:
+			print(stream)
+		print("Update stream", self.node.update_stream)
+
 class A2MXXMLRPCServer(SimpleXMLRPCServer):
 	def __init__(self, node, bind):
 		SimpleXMLRPCServer.__init__(self, bind, logRequests=False)
