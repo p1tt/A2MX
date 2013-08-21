@@ -7,6 +7,7 @@ import struct
 import os
 import datetime
 import random
+from collections import OrderedDict
 
 from ecc import ECC
 from bson import BSON
@@ -92,6 +93,7 @@ class A2MXStream():
 			self.send_updates, self.bytes_in, self.bytes_out, ' disconnected' if not self.__connected else '')
 
 	def connect(self):
+		assert self.__connected == False
 		uri = self.uri
 		assert uri.startswith('ax://')
 		hostport = uri[5:].split(':')
@@ -126,9 +128,9 @@ class A2MXStream():
 		if not data:
 			self.connectionfailure()
 			return
-		self.data += data
+		self._data += data
 		self.bytes_in += len(data)
-		while len(self.data) >= self.handler[0]:
+		while len(self._data) >= self.handler[0]:
 			self.handler[1](self.handler[0])
 			if not self.__connected:
 				break
@@ -138,6 +140,7 @@ class A2MXStream():
 			self.node.wremove(self)
 			self.connected()
 		else:
+			print("A2MXStream", self, self.node.selectloop.wlist)
 			assert False
 
 	def select_e(self):
@@ -145,8 +148,15 @@ class A2MXStream():
 		self.connectionfailure()
 
 	def connected(self):
+		# test sock connected
+		try:
+			self.sock.send(b'')
+		except ConnectionRefusedError:
+			self.connectionfailure()
+			return
+
 		self.__connected = True
-		self.data = bytearray()
+		self._data = bytearray()
 		self.handler = (4, self.getlength)
 		self.node.add(self)
 		if self.uri:
@@ -157,15 +167,15 @@ class A2MXStream():
 		self.__pub_sent = True
 
 	def getlength(self, length):
-		assert len(self.data) >= 4
-		length = struct.unpack_from('>L', self.data[:4])[0]
-		del self.data[:4]
+		assert len(self._data) >= 4
+		length = struct.unpack_from('>L', self._data[:4])[0]
+		del self._data[:4]
 		self.handler = (length, self.getdata)
 
 	def getdata(self, length):
-		assert len(self.data) >= length
-		data = self.data[:length]
-		del self.data[:length]
+		assert len(self._data) >= length
+		data = self._data[:length]
+		del self._data[:length]
 
 		ecc = self.node.ecc
 		if self.__pub_sent:		# if we sent our public key then all data we receive has to be encrypted
@@ -195,43 +205,73 @@ class A2MXStream():
 			self.incoming_path = p
 			self.node.new_path(p)
 		else:
-			for fn, (args, kwargs) in self.parse(data).items():
-				try:
-					f = getattr(self, fn)
-				except AttributeError:
-					pass
-				else:
-					if hasattr(f, 'A2MXRequest__marker__') and f.A2MXRequest__marker__ == True:
-						f(*args, **kwargs)
-						continue
-				print("Invalid request {}".format(fn))
+			def parseRequest(request):
+				def exfn(fn, args, kwargs):
+					try:
+						f = getattr(self, fn)
+					except AttributeError:
+						pass
+					else:
+						if hasattr(f, 'A2MXRequest__marker__') and f.A2MXRequest__marker__ == True:
+							nextrequest = kwargs.pop('next', None)
+							waitseconds = f(*args, **kwargs)
+							if waitseconds:
+								yield waitseconds
+							if not nextrequest:
+								return
+							parseRequest(nextrequest.items())
+							return
+					print("Invalid request {}({}, {})".format(fn, args, kwargs))
+
+				for fn, (args, kwargs) in request:
+					yd = exfn(fn, args, kwargs)
+					try:
+						value = next(yd)
+					except StopIteration:
+						pass
+					else:
+						def f():
+							try:
+								next(yd)
+							except StopIteration:
+								pass
+						self.node.selectloop.tadd(value, f)
+			parseRequest(self.parse(data).items())
 		self.handler = (4, self.getlength)
 
 	@staticmethod
 	def parse(data):
-		d = BSON.decode(data, tz_aware=True)
+		d = BSON.decode(data, as_class=OrderedDict, tz_aware=True)
 		return d
 
 	@staticmethod
 	def checkvalue(value):
 		if isinstance(value, bytearray):
 			return bytes(value)
-		elif isinstance(value, (bytes, str, datetime.datetime, type(None))):
+		elif isinstance(value, (int, bytes, str, datetime.datetime, type(None), dict, OrderedDict)):
 			return value
 		else:
 			raise ValueError('Invalid type in args {} = {}'.format(type(value), value))
 
 	@staticmethod
-	def request(fn, *args, **kwargs):
+	def request(fn, *args, request=None, **kwargs):
+		if request == None:
+			request = OrderedDict()
+		else:
+			assert isinstance(request, OrderedDict)
+
 		a = [ A2MXStream.checkvalue(arg) for arg in args ]
 		kw = {}
 		for k, v in kwargs.items():
 			kw[k] = A2MXStream.checkvalue(v)
-		return BSON.encode({fn: (a, kw)})
+		request[fn] = (a, kw)
+		return request
 
 	def raw_send(self, data):
 		if not self.__connected:
 			return False
+		if isinstance(data, OrderedDict):
+			data = BSON.encode(data)
 		try:
 			self.sock.send(struct.pack('>L', len(data)), socket.MSG_MORE)
 			self.sock.send(data)
@@ -244,6 +284,8 @@ class A2MXStream():
 	def encrypted_send(self, data):
 		if not self.__connected:
 			return False
+		if isinstance(data, OrderedDict):
+			data = BSON.encode(data)
 		data = self.node.ecc.encrypt(bytes(data), self.remote_ecc.get_pubkey())
 		return self.raw_send(data)
 
@@ -260,7 +302,7 @@ class A2MXStream():
 		self.incoming_path = None
 		self.outgoing_path = None
 
-		self.data = None
+		self._data = None
 
 	def connectionfailure(self):
 		self.shutdown()
@@ -303,6 +345,15 @@ class A2MXStream():
 	@A2MXRequest
 	def sendto(self, node, data):
 		raise NotImplemented()
+
+	@A2MXRequest
+	def data(self, data):
+		print("got data command", data)
+
+	@A2MXRequest
+	def sleep(self, seconds):
+		print("sleep for {}".format(seconds))
+		return seconds
 
 class A2MXPath():
 	def __init__(self, endnode=None, lasthop=None, signature=None, timestamp=None, axuri=None):
@@ -417,6 +468,8 @@ class A2MXNode():
 		if self.update_stream == None:
 			self.update_stream = stream
 			r = stream.request('pull', datetime.datetime.min)
+			sr = stream.request('data', 'hello')
+			r = stream.request('sleep', 10, request=r, next=sr)
 			stream.send(r)
 
 	def del_stream(self, stream):
@@ -433,7 +486,7 @@ class A2MXNode():
 		if stream.outgoing_path:
 			self.del_path(stream.outgoing_path)
 
-	def new_path(self, path):
+	def new_path(self, path, delete=False):
 		# save path
 		endpub = path.endpub
 		try:
@@ -538,6 +591,7 @@ class SelectLoop():
 		self.tlist = []
 
 	def add(self, selectable):
+		assert selectable not in self.rlist
 		self.rlist.append(selectable)
 	def remove(self, selectable):
 		try:
@@ -545,6 +599,7 @@ class SelectLoop():
 		except ValueError:
 			pass
 	def wadd(self, selectable):
+		assert selectable not in self.wlist
 		self.wlist.append(selectable)
 	def wremove(self, selectable):
 		try:
