@@ -11,13 +11,10 @@ class ECC(pyelliptic.ECC):
 		x, ybit = self.point_compress(self.pubkey_x, self.pubkey_y)
 		c = bytearray(b'A')
 		c += b'X' if ybit else b'x'
-		c += (b'\0') * (66 - len(x))
 		c += x
-		assert len(c) == 68
 		return c
 
 	def key_uncompress(self, data):
-		assert len(data) == 68
 		if chr(data[0]) != 'A': 
 			raise InvalidDataException('data[0] != A')
 		if chr(data[1]) == 'X':

@@ -5,8 +5,12 @@ from collections import OrderedDict
 
 from bson import BSON
 
+class InvalidDataException(Exception):
+	pass
+
 from config import config
 from ecc import ECC
+
 from a2mxpath import A2MXPath
 
 def A2MXRequest(fn):
@@ -265,6 +269,8 @@ class A2MXStream():
 
 	@A2MXRequest
 	def path(self, **kwargs):
+		if kwargs['lasthop'] == self.node.ecc.pubkey_c():
+			kwargs['lasthop'] = self.node.ecc
 		p = A2MXPath(**kwargs)
 		if p.lasthop.get_pubkey() == self.node.ecc.get_pubkey() and p.endnode.get_pubkey() == self.remote_ecc.get_pubkey():
 			self.outgoing_path = p
@@ -285,11 +291,6 @@ class A2MXStream():
 		if not self.node.update_stream == self:
 			print("decline on non update stream.")
 			return
-
-	@A2MXRequest
-	def disappear(self, **kwargs):
-		p = A2MXPath(**kwargs)
-		self.node.del_path(p)
 
 	@A2MXRequest
 	def flush(self, node):

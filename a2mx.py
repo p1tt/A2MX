@@ -21,10 +21,7 @@ class Unbuffered:
 	def __getattr__(self, attr):
 		return getattr(self.stream, attr)
 
-sys.stdout=Unbuffered(sys.stdout)
-
-class InvalidDataException(Exception):
-	pass
+sys.stdout = Unbuffered(sys.stdout)
 
 class A2MXServer():
 	def __init__(self, node, bind):
@@ -134,30 +131,32 @@ class A2MXNode():
 		if stream.outgoing_path:
 			self.del_path(stream.outgoing_path)
 
-	def new_path(self, path, delete=False):
-		# save path
+	def new_path(self, path):
 		endpub = path.endpub
-		try:
-			pathlist = self.paths[endpub]
-			if len(pathlist) == 0:	# HACK :)
-				raise KeyError()
-		except KeyError:
+		if endpub not in self.paths:
 			self.paths[endpub] = []
-			pathlist = self.paths[endpub]
 			print("node discovered", ECC.b58(path.endnode.pubkey_hash()).decode('ascii'))
+		pathlist = self.paths[endpub]
+
 		if path not in pathlist:
 			pathlist.append(path)
 			pathlist.sort()
 		else:
 			index = pathlist.index(path)
-			if path.timestamp <= pathlist[index].timestamp:
+			oldpath = pathlist[index]
+
+			if path.deleted and path.deleted >= oldpath.timestamp:
+				pass
+			elif path.timestamp <= oldpath.timestamp:
 				print("path", path, "known. ignoring.")
 				return
 			else:
-				print("updating path", path)
-				pathlist[index] = path
+				if oldpath.deleted and path.timestamp < oldpath.deleted:
+					print("ignoring path with older timestamp than deleted")
+					return
+			print("updating path", path)
+			pathlist[index] = path
 
-		print("new_path", path)
 		for ostream in self.streams:
 			if ostream == path.stream or (not ostream.send_updates and ostream != self.update_stream):
 				continue
@@ -165,13 +164,8 @@ class A2MXNode():
 			ostream.send(ostream.request('path', **path.data))
 
 	def del_path(self, path):
-		try:
-			self.paths[path.endpub].remove(path)
-		except (ValueError, KeyError):
-			return
-		print("del_path", path)
-		for ostream in self.streams:
-			ostream.send(ostream.request('disappear', **path.data))
+		path.markdelete()
+		self.new_path(path)
 
 	def find_new_peers(self):
 		self.selectloop.tadd(random.randint(5, 15), self.find_new_peers)
@@ -184,7 +178,7 @@ class A2MXNode():
 				continue
 			path = pathlist[0]
 
-			if path.axuri != None and path.endpub != self.ecc.pubkey_hash():
+			if path.axuri != None and not path.deleted and path.endpub != self.ecc.pubkey_hash():
 				already_connected = False
 				for stream in self.streams:
 					if stream.remote_ecc.pubkey_hash() == path.endnode.pubkey_hash():
@@ -207,6 +201,8 @@ class A2MXNode():
 			if thispath == None:
 				thispath = [dst]
 			for path in pathlist:
+				if path.deleted:
+					continue
 				lasthop = path.lasthop.pubkey_hash()
 				if lasthop == src:
 					ytp = thispath[:]

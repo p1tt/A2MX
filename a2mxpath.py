@@ -3,9 +3,13 @@ import datetime
 from bson import BSON
 
 from ecc import ECC
+from a2mxstream import InvalidDataException
+
+def now():
+	return BSON.decode(BSON.encode({'t': datetime.datetime.now(datetime.timezone.utc)}), tz_aware=True)['t']
 
 class A2MXPath():
-	def __init__(self, endnode=None, lasthop=None, signature=None, timestamp=None, axuri=None):
+	def __init__(self, endnode=None, lasthop=None, signature=None, timestamp=None, axuri=None, deleted=None, delete_signature=None):
 		if not isinstance(lasthop, ECC):
 			self.lasthop = ECC()
 			self.lasthop.pubkey_x, self.lasthop.pubkey_y = self.lasthop.key_uncompress(lasthop)
@@ -20,7 +24,7 @@ class A2MXPath():
 		else:
 			self.endnode = endnode
 
-		self.timestamp = BSON.decode(BSON.encode({'t': datetime.datetime.now(datetime.timezone.utc)}), tz_aware=True)['t'] if timestamp == None else timestamp
+		self.timestamp = now() if timestamp == None else timestamp
 
 		sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey(), self.timestamp.isoformat().encode('ascii')))
 		if signature == None:
@@ -33,14 +37,37 @@ class A2MXPath():
 			self.signature = signature
 		self.stream = None
 		self.axuri = axuri
+		self.deleted = deleted
+		if self.deleted:
+			sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey(), self.timestamp.isoformat().encode('ascii'), self.deleted.isoformat().encode('ascii')))
+
+			verify = self.lasthop.verify(delete_signature, sigdata) or self.endnode.verify(delete_signature, sigdata)
+			if not verify:
+				print("SIGDATA", self, sigdata, delete_signature)
+				raise InvalidDataException('delete signature failure')
+			self.delete_signature = delete_signature
 
 	@property
 	def data(self):
-		return { 'endnode': self.endnode.pubkey_c(), 'lasthop': self.lasthop.pubkey_c(), 'signature': self.signature, 'axuri': self.axuri, 'timestamp': self.timestamp }
+		data = { 'endnode': self.endnode.pubkey_c(), 'lasthop': self.lasthop.pubkey_c(), 'signature': self.signature, 'axuri': self.axuri, 'timestamp': self.timestamp }
+		if self.deleted:
+			data['deleted'] = self.deleted
+			data['delete_signature'] = self.delete_signature
+		return data
 
 	@property
 	def endpub(self):
 		return self.endnode.pubkey_hash()
+
+	def markdelete(self):
+		self.deleted = now()
+		sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey(), self.timestamp.isoformat().encode('ascii'), self.deleted.isoformat().encode('ascii')))
+		if self.lasthop.privkey:
+			self.delete_signature = self.lasthop.sign(sigdata)
+		elif self.endnode.privkey:
+			self.delete_signature = self.endnode.sign(sigdata)
+		else:
+			raise ValueError('Cannot mark path as deleted without private key.')
 
 	def __eq__(self, other):
 		if not isinstance(other, A2MXPath):
@@ -53,6 +80,6 @@ class A2MXPath():
 		return self.endnode.get_pubkey() > other.endnode.get_pubkey() or (self.endnode.get_pubkey() == other.endnode.get_pubkey() and self.lasthop.get_pubkey() > other.lasthop.get_pubkey())
 
 	def __str__(self):
-		return 'Endnode: {} Lasthop: {} URI: {} Timestamp: {}'.format(ECC.b58(self.endnode.pubkey_hash()).decode('ascii'), ECC.b58(self.lasthop.pubkey_hash()).decode('ascii'), self.axuri, self.timestamp.isoformat())
+		return 'Endnode: {} Lasthop: {} URI: {} Timestamp: {} Deleted: {}'.format(ECC.b58(self.endnode.pubkey_hash()).decode('ascii'), ECC.b58(self.lasthop.pubkey_hash()).decode('ascii'), self.axuri, self.timestamp.isoformat(), self.deleted.isoformat() if self.deleted else False)
 
 
