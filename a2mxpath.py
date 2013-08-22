@@ -24,7 +24,12 @@ class A2MXPath():
 		else:
 			self.endnode = endnode
 
-		self.timestamp = now() if timestamp == None else timestamp
+		if timestamp:
+			if timestamp > datetime.datetime.now(datetime.timezone.utc):
+				raise ValueError('timestamp is in the future')
+			self.timestamp = timestamp
+		else:
+			self.timestamp = now()
 
 		sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey(), self.timestamp.isoformat().encode('ascii')))
 		if signature == None:
@@ -39,8 +44,10 @@ class A2MXPath():
 		self.axuri = axuri
 		self.deleted = deleted
 		if self.deleted:
-			sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey(), self.timestamp.isoformat().encode('ascii'), self.deleted.isoformat().encode('ascii')))
+			if self.deleted > datetime.datetime.now(datetime.timezone.utc):
+				raise ValueError('deleted timestamp is in the future')
 
+			sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey(), self.timestamp.isoformat().encode('ascii'), self.deleted.isoformat().encode('ascii')))
 			verify = self.lasthop.verify(delete_signature, sigdata) or self.endnode.verify(delete_signature, sigdata)
 			if not verify:
 				print("SIGDATA", self, sigdata, delete_signature)
@@ -81,5 +88,4 @@ class A2MXPath():
 
 	def __str__(self):
 		return 'Endnode: {} Lasthop: {} URI: {} Timestamp: {} Deleted: {}'.format(ECC.b58(self.endnode.pubkey_hash()).decode('ascii'), ECC.b58(self.lasthop.pubkey_hash()).decode('ascii'), self.axuri, self.timestamp.isoformat(), self.deleted.isoformat() if self.deleted else False)
-
 
