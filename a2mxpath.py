@@ -84,5 +84,5 @@ class A2MXPath():
 		return self.endnode.get_pubkey() > other.endnode.get_pubkey() or (self.endnode.get_pubkey() == other.endnode.get_pubkey() and self.lasthop.get_pubkey() > other.lasthop.get_pubkey())
 
 	def __str__(self):
-		return 'Endnode: {} Lasthop: {} URI: {} Timestamp: {} Deleted: {}'.format(ECC.b58(self.endnode.pubkey_hash()).decode('ascii'), ECC.b58(self.lasthop.pubkey_hash()).decode('ascii'), self.axuri, self.timestamp.isoformat(), self.deleted.isoformat() if self.deleted else False)
+		return 'Endnode: {} Lasthop: {} URI: {} Timestamp: {} Deleted: {}'.format(self.endnode.b58_pubkey_hash(), self.lasthop.b58_pubkey_hash(), self.axuri, self.timestamp.isoformat(), self.deleted.isoformat() if self.deleted else False)
 

@@ -35,18 +35,9 @@ class A2MXStream():
 		self.node = node
 		self.uri = uri
 
-		self.send = self.raw_send
-		self.remote_ecc = None
-		self.__connected = False
-		self.__remote_auth = False
-		self.__pub_sent = False
-		self.incoming_path = None
-		self.outgoing_path = None
-		self.send_updates = False
 		self.bytes_in = 0
 		self.bytes_out = 0
-		self.__select_r_fun = None
-		self.__select_w_fun = None
+		self.cleanstate()
 
 		if sock:
 			self.sock = sock
@@ -57,9 +48,22 @@ class A2MXStream():
 		else:
 			raise ValueError('Invalid arguments to A2MXStream')
 
+	def cleanstate(self):
+		self.send = self.raw_send
+		self.remote_ecc = None
+		self.__connected = False
+		self.__remote_auth = False
+		self.__pub_sent = False
+		self.incoming_path = None
+		self.outgoing_path = None
+		self._data = None
+		self.send_updates = False
+		self.__select_r_fun = None
+		self.__select_w_fun = None
+
 	def __str__(self):
 		return '{} Remote: {} Updates: {} In: {}B Out: {}B{}'.format(
-			'Incoming' if self.uri == None else 'Outgoing', ECC.b58(self.remote_ecc.pubkey_hash()).decode('ascii'),
+			'Incoming' if self.uri == None else 'Outgoing', self.remote_ecc.b58_pubkey_hash(),
 			self.send_updates, self.bytes_in, self.bytes_out, ' disconnected' if not self.__connected else '')
 
 	def connect(self):
@@ -181,7 +185,6 @@ class A2MXStream():
 
 		if self.remote_ecc == None:	# first data we expect is the compressed remote public key
 			self.remote_ecc = ECC(pubkey_compressed=data)
-			print("got remote pubkey", ECC.b58(self.remote_ecc.pubkey_hash()).decode('ascii'))
 
 			# ok we have the remote public key, from now on we send everything encrypted
 			self.send = self.encrypted_send
@@ -197,7 +200,7 @@ class A2MXStream():
 				raise InvalidDataException('failed to verify remote')
 			self.__remote_auth = True
 			self.node.add_stream(self)
-			print("incoming" if self.uri == None else "outgoing", "connection up with", ECC.b58(self.remote_ecc.pubkey_hash()).decode('ascii'))
+			print("incoming" if self.uri == None else "outgoing", "connection up with", self.remote_ecc.b58_pubkey_hash())
 
 			p = A2MXPath(ecc, self.remote_ecc, axuri=config['publish_axuri'])
 			self.incoming_path = p
@@ -265,18 +268,23 @@ class A2MXStream():
 		request[fn] = (a, kw)
 		return request
 
-	def raw_send(self, data):
+	def raw_send(self, data, wremove=False):
 		if not self.__connected:
-			return False
-		if isinstance(data, OrderedDict):
-			data = BSON.encode(data)
+			return
 		try:
-			self.sock.send(struct.pack('>L', len(data)) + data)
-			self.bytes_out += len(data) + 4
-			return True
+			self.sock.sendall(struct.pack('>L', len(data)) + data)
+		except ssl.SSLWantWriteError:
+			print('SSLWantWriteError raised, this codepath is heavily untested.')
+			self.__select_w_fun = (self.raw_send, [data], { 'wremove': True })
+			if not wremove:
+				self.node.wadd(self)
 		except (ConnectionResetError, BrokenPipeError, ConnectionRefusedError):
 			self.connectionfailure()
-		return False
+		else:
+			self.bytes_out += len(data) + 4
+		if wremove:
+			self.node.wremove(self)
+			self.__select_w_fun = None
 
 	def encrypted_send(self, data):
 		if not self.__connected:
@@ -287,23 +295,18 @@ class A2MXStream():
 		return self.raw_send(data)
 
 	def shutdown(self):
+		try:
+			self.sock.shutdown(socket.SHUT_RDWR)
+		except OSError:
+			pass
 		self.sock.close()
 		self.node.del_stream(self)
 		self.node.remove(self)
-
-		self.send = self.raw_send
-		self.remote_ecc = None
-		self.__connected = False
-		self.__remote_auth = False
-		self.__pub_sent = False
-		self.incoming_path = None
-		self.outgoing_path = None
-
-		self._data = None
+		self.cleanstate()
 
 	def connectionfailure(self):
 		self.shutdown()
-		print(self.uri, "connection failure")
+		print(self.remote_ecc.b58_pubkey_hash() if self.remote_ecc else self.uri, "connection failure")
 		if self.uri:
 			self.node.selectloop.tadd(5, self.connect)
 
@@ -319,7 +322,7 @@ class A2MXStream():
 
 	@A2MXRequest
 	def pull(self, timestamp):
-		print("pull from", ECC.b58(self.remote_ecc.pubkey_hash()).decode('ascii'))
+		print("pull from", self.remote_ecc.b58_pubkey_hash())
 		for pathlist in self.node.paths.values():
 			for path in pathlist:
 				r = self.request('path', **path.data)

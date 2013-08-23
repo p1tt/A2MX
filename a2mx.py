@@ -61,7 +61,7 @@ class A2MXRoute():
 	def __str__(self):
 		s = 'A2MXRoute'
 		for r in self.routes:
-			s += ' ' + ECC.b58(r).decode('ascii')
+			s += ' ' + r.b58_pubkey_hash()
 		return s
 
 class A2MXNode():
@@ -73,7 +73,7 @@ class A2MXNode():
 		self.update_stream = None
 		self.ecc = ECC(pem_keyfile=config['key.pem'])
 
-		mypub = ECC.b58(self.ecc.pubkey_hash()).decode('ascii')
+		mypub = self.ecc.b58_pubkey_hash()
 		if sys.stdout.isatty():
 			cwd = os.getcwd().rsplit('/', 1)[1]
 			sys.stdout.write("\x1b]2;{}: {}\x07".format(cwd, mypub))
@@ -120,7 +120,7 @@ class A2MXNode():
 		endpub = path.endpub
 		if endpub not in self.paths:
 			self.paths[endpub] = []
-			print("node discovered", ECC.b58(path.endnode.pubkey_hash()).decode('ascii'))
+			print("node discovered", path.endnode.b58_pubkey_hash())
 		pathlist = self.paths[endpub]
 
 		if path not in pathlist:
@@ -145,7 +145,7 @@ class A2MXNode():
 		for ostream in self.streams:
 			if ostream == path.stream or (not ostream.send_updates and ostream != self.update_stream):
 				continue
-			print("sending", path, "to", ECC.b58(ostream.remote_ecc.pubkey_hash()).decode('ascii'))
+			print("sending", path, "to", ostream.remote_ecc.b58_pubkey_hash())
 			ostream.send(ostream.request('path', **path.data))
 
 	def del_path(self, path):
@@ -191,7 +191,7 @@ class A2MXNode():
 				lasthop = path.lasthop.pubkey_hash()
 				if lasthop == src:
 					ytp = thispath[:]
-					ytp.append(lasthop)
+					ytp.append(path.lasthop)
 					yield A2MXRoute(ytp)
 					continue
 				if lasthop == dst:
@@ -199,7 +199,7 @@ class A2MXNode():
 				if lasthop in thispath:
 					continue
 				tp = thispath[:]
-				tp.append(lasthop)
+				tp.append(path.lasthop)
 				for p in find_path(self.paths[lasthop], tp, step+1):
 					yield p
 		return find_path(pathlist)

@@ -79,6 +79,9 @@ class ECC(pyelliptic.ECC):
 		h = hashlib.new('RIPEMD160', data).digest()
 		return h
 
+	def b58_pubkey_hash(self):
+		return self.b58(self.pubkey_hash()).decode('ascii')
+
 	@staticmethod
 	def b58(value):
 		inputnum = int.from_bytes(value, byteorder='big')
