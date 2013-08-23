@@ -71,30 +71,15 @@ class A2MXNode():
 		self.paths = {}
 		self.streams = []
 		self.update_stream = None
-		try:
-			with open('.a2mx/priv', 'rb') as f:
-				privkey = f.read()
-			with open('.a2mx/pub', 'rb') as f:
-				pubkey = f.read()
-		except FileNotFoundError:
-			privkey = None
-			pubkey = None
-		self.ecc = ECC(privkey=privkey, pubkey=pubkey)
-		if privkey == None:
-			os.umask(63)	# 0700
-			try:
-				os.mkdir('.a2mx')
-			except FileExistsError:
-				pass
-			with open('.a2mx/priv', 'wb') as f:
-				f.write(self.ecc.get_privkey())
-			with open('.a2mx/pub', 'wb') as f:
-				f.write(self.ecc.get_pubkey())
+		self.ecc = ECC(pem_keyfile=config['key.pem'])
+
 		mypub = ECC.b58(self.ecc.pubkey_hash()).decode('ascii')
 		if sys.stdout.isatty():
 			cwd = os.getcwd().rsplit('/', 1)[1]
 			sys.stdout.write("\x1b]2;{}: {}\x07".format(cwd, mypub))
 		print("I am", mypub)
+		e = ECC(pubkey_compressed=self.ecc.pubkey_c())
+		assert self.ecc.pubkey_hash() == e.pubkey_hash()
 		self.selectloop.tadd(random.randint(5, 15), self.find_new_peers)
 
 	def add(self, selectable):

@@ -1,4 +1,6 @@
 config = {
+	'cert.pem': '.a2mx/cert.pem',
+	'key.pem': '.a2mx/key.pem',
 	'bind': [ ('', 2594) ],
 	'publish_axuri': None,
 	'targets': [],

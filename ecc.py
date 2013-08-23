@@ -1,11 +1,59 @@
 import pyelliptic
 import hashlib
+import base64
+from pyasn1.codec.der import decoder
 
 b58chars = b'123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
+def pem2rawkeys(filename):
+	def bitstring2bytes(data):      
+		bits = list(data) + [0] * ((8 - len(data) % 8) % 8)
+		out = bytearray()
+		for i in range(0, len(bits), 8):
+			byte = 0
+			for b in bits[i:i+8]:
+				byte <<= 1
+				if b == 1:
+					byte |= 0x01
+				elif b == 0:
+					pass
+				else:
+					raise ValueError()
+			out += byte.to_bytes(1, byteorder='big')
+		return bytes(out)
+
+	pem = open(filename, 'r')
+	inkey = False
+	b64data = ''
+	for line in pem:
+		if line.strip() == '-----BEGIN EC PRIVATE KEY-----':
+			inkey = True
+		elif line.strip() == '-----END EC PRIVATE KEY-----':
+			break
+		elif inkey:
+			b64data += line
+	k = base64.b64decode(b64data)
+	dk = decoder.decode(k)[0]
+
+	# version = 1
+	assert dk[0] == 1
+	# curve = secp521r1
+	assert str(dk[2]) == '1.3.132.0.35'
+	privkey = bytes(dk[1])
+	pubkey = bitstring2bytes(dk[3])
+
+	return privkey, pubkey
+
 class ECC(pyelliptic.ECC):
-	def __init__(self, pubkey=None, privkey=None, pubkey_x=None, pubkey_y=None):
-		pyelliptic.ECC.__init__(self, curve='secp521r1', pubkey=pubkey, privkey=privkey, pubkey_x=pubkey_x, pubkey_y=pubkey_y)
+	def __init__(self, pem_keyfile=None, pubkey_x=None, pubkey_y=None, pubkey_compressed=None):
+		privkey = None
+		pyelliptic.ECC.__init__(self, curve='secp521r1')
+		if pem_keyfile:
+			privkey, pubkey = pem2rawkeys(pem_keyfile)
+			pubkey_x, pubkey_y = self.oct2point(pubkey)
+		elif pubkey_compressed:
+			pubkey_x, pubkey_y = self.key_uncompress(pubkey_compressed)
+		self._set_keys(pubkey_x, pubkey_y, privkey)
 
 	def pubkey_c(self):
 		x, ybit = self.point_compress(self.pubkey_x, self.pubkey_y)

@@ -11,14 +11,12 @@ def now():
 class A2MXPath():
 	def __init__(self, endnode=None, lasthop=None, signature=None, timestamp=None, axuri=None, deleted=None, delete_signature=None):
 		if not isinstance(lasthop, ECC):
-			self.lasthop = ECC()
-			self.lasthop.pubkey_x, self.lasthop.pubkey_y = self.lasthop.key_uncompress(lasthop)
+			self.lasthop = ECC(pubkey_compressed=lasthop)
 		else:
 			self.lasthop = lasthop
 
 		if not isinstance(endnode, ECC):
-			self.endnode = ECC()
-			self.endnode.pubkey_x, self.endnode.pubkey_y = self.endnode.key_uncompress(endnode)
+			self.endnode = ECC(pubkey_compressed=endnode)
 			if signature == None:
 				raise ValueError()
 		else:
@@ -50,7 +48,6 @@ class A2MXPath():
 			sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey(), self.timestamp.isoformat().encode('ascii'), self.deleted.isoformat().encode('ascii')))
 			verify = self.lasthop.verify(delete_signature, sigdata) or self.endnode.verify(delete_signature, sigdata)
 			if not verify:
-				print("SIGDATA", self, sigdata, delete_signature)
 				raise InvalidDataException('delete signature failure')
 			self.delete_signature = delete_signature
 

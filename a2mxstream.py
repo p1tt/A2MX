@@ -2,6 +2,7 @@ import socket
 import struct
 import datetime
 from collections import OrderedDict
+import ssl
 
 from bson import BSON
 
@@ -12,6 +13,16 @@ from config import config
 from ecc import ECC
 
 from a2mxpath import A2MXPath
+
+def SSL(sock, server=False):
+	context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
+	context.verify_mode = ssl.CERT_NONE
+	context.set_ecdh_curve('secp521r1')
+	context.options = ssl.OP_SINGLE_DH_USE | ssl.OP_SINGLE_ECDH_USE
+	context.set_ciphers('ECDHE-ECDSA-AES256-SHA')
+	if server:
+		context.load_cert_chain(config['cert.pem'], config['key.pem'])
+	return context.wrap_socket(sock, server_side=server, do_handshake_on_connect=False)
 
 def A2MXRequest(fn):
 	fn.A2MXRequest__marker__ = True
@@ -34,6 +45,8 @@ class A2MXStream():
 		self.send_updates = False
 		self.bytes_in = 0
 		self.bytes_out = 0
+		self.__select_r_fun = None
+		self.__select_w_fun = None
 
 		if sock:
 			self.sock = sock
@@ -78,9 +91,14 @@ class A2MXStream():
 		return self.sock.fileno()
 
 	def select_r(self):
+		if self.__select_r_fun:
+			self.__select_r_fun[0](*self.__select_r_fun[1], **self.__select_r_fun[2])
+			return
 		try:
 			data = self.sock.recv(4096)
-		except (ConnectionResetError, OSError):
+		except ssl.SSLWantReadError:
+			return
+		except (ConnectionResetError, OSError) as e:
 			data = False
 		if not data:
 			self.connectionfailure()
@@ -93,6 +111,9 @@ class A2MXStream():
 				break
 
 	def select_w(self):
+		if self.__select_w_fun:
+			self.__select_w_fun[0](*self.__select_w_fun[1], **self.__select_w_fun[2])
+			return
 		if not self.__connected:
 			self.node.wremove(self)
 			self.connected()
@@ -112,12 +133,32 @@ class A2MXStream():
 			self.connectionfailure()
 			return
 
-		self.__connected = True
-		self._data = bytearray()
-		self.handler = (4, self.getlength)
+		self.sock = SSL(self.sock, server=self.uri == None)
+
+		def do_handshake():
+			try:
+				self.sock.do_handshake()
+			except ssl.SSLWantReadError:
+				return
+			except ssl.SSLWantWriteError:
+				return
+			except ssl.SSLError:
+				pass
+			self.node.wremove(self)
+			self.__select_w_fun = None
+			self.__select_r_fun = None
+
+			self.__connected = True
+			self._data = bytearray()
+			self.handler = (4, self.getlength)
+			if self.uri:
+				self.__send_pub()
+
+		self.__select_w_fun = (do_handshake, [], {})
+		self.__select_r_fun = (do_handshake, [], {})
 		self.node.add(self)
-		if self.uri:
-			self.__send_pub()
+		self.node.wadd(self)
+		do_handshake()
 
 	def __send_pub(self):
 		self.send(self.node.ecc.pubkey_c())
@@ -139,8 +180,8 @@ class A2MXStream():
 			data = ecc.decrypt(bytes(data))
 
 		if self.remote_ecc == None:	# first data we expect is the compressed remote public key
-			pubkey_x, pubkey_y = ecc.key_uncompress(data)
-			self.remote_ecc = ECC(pubkey_x=pubkey_x, pubkey_y=pubkey_y)
+			self.remote_ecc = ECC(pubkey_compressed=data)
+			print("got remote pubkey", ECC.b58(self.remote_ecc.pubkey_hash()).decode('ascii'))
 
 			# ok we have the remote public key, from now on we send everything encrypted
 			self.send = self.encrypted_send
@@ -230,8 +271,7 @@ class A2MXStream():
 		if isinstance(data, OrderedDict):
 			data = BSON.encode(data)
 		try:
-			self.sock.send(struct.pack('>L', len(data)), socket.MSG_MORE)
-			self.sock.send(data)
+			self.sock.send(struct.pack('>L', len(data)) + data)
 			self.bytes_out += len(data) + 4
 			return True
 		except (ConnectionResetError, BrokenPipeError, ConnectionRefusedError):
