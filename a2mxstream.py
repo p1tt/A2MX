@@ -66,14 +66,13 @@ class A2MXStream():
 		self.incoming_path = None
 		self.outgoing_path = None
 		self._data = None
-		self.send_updates = False
 		self.__select_r_fun = None
 		self.__select_w_fun = None
 
 	def __str__(self):
-		return '{} Remote: {} Updates: {} In: {}B Out: {}B{}'.format(
+		return '{} Remote: {} In: {}B Out: {}B{}'.format(
 			'Incoming' if self.uri == None else 'Outgoing', self.remote_ecc.b58_pubkey_hash(),
-			self.send_updates, self.bytes_in, self.bytes_out, ' disconnected' if not self.__connected else '')
+			self.bytes_in, self.bytes_out, ' disconnected' if not self.__connected else '')
 
 	def connect(self):
 		assert self.__connected == False
@@ -337,8 +336,6 @@ class A2MXStream():
 	def connectionfailure(self):
 		print(self.remote_ecc.b58_pubkey_hash() if self.remote_ecc else self.uri, "connection failure")
 		self.shutdown()
-		if self.uri:
-			self.node.selectloop.tadd(5, self.connect)
 
 	@A2MXRequest
 	def path(self, **kwargs):
@@ -358,7 +355,6 @@ class A2MXStream():
 				continue
 			r = self.request('path', **path.data)
 			self.send(r)
-		self.send_updates = True
 
 	@A2MXRequest_Signed
 	def decline(self):

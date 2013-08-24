@@ -63,7 +63,7 @@ class A2MXRoute():
 	def __str__(self):
 		s = 'A2MXRoute'
 		for r in self.routes:
-			s += ' ' + r.b58_pubkey_hash()
+			s += ' ' + ECC.b58(r).decode('ascii')
 		return s
 
 class A2MXNode():
@@ -83,7 +83,8 @@ class A2MXNode():
 		self.streams = []
 		self.nodes = {}
 		self.connected_nodes = {}
-		self.update_stream = None
+		self.axuris = {}
+
 		self.ecc = ECC(pem_keyfile=config['key.pem'])
 
 		mypub = self.ecc.b58_pubkey_hash()
@@ -115,18 +116,19 @@ class A2MXNode():
 		self.streams.append(stream)
 		self.connected_nodes[stream.remote_ecc.pubkey_c()] = stream
 
-		if self.update_stream == None:
-			self.update_stream = stream
-			try:
-				last_known_path = self.paths[-1]
-			except IndexError:
-				last_known_path = datetime.datetime.min
-			else:
-				last_known_path = last_known_path.newest_timestamp # - datetime.timedelta(minutes=10)
-			r = stream.request('pull', last_known_path)
-			sr = stream.request('data', 'hello')
-			r = stream.request('sleep', 10, request=r, next=sr)
-			stream.send(r)
+		if len(self.streams) > 1:
+			return True
+
+		try:
+			last_known_path = self.paths[-1]
+		except IndexError:
+			last_known_path = datetime.datetime.min
+		else:
+			last_known_path = last_known_path.newest_timestamp # - datetime.timedelta(minutes=10)
+		r = stream.request('pull', last_known_path)
+		#sr = stream.request('data', 'hello')
+		#r = stream.request('sleep', 10, request=r, next=sr)
+		stream.send(r)
 		return True
 
 	def del_stream(self, stream):
@@ -136,13 +138,8 @@ class A2MXNode():
 		assert stream.remote_ecc.pubkey_c() in self.connected_nodes and self.connected_nodes[stream.remote_ecc.pubkey_c()] == stream
 		del self.connected_nodes[stream.remote_ecc.pubkey_c()]
 
-		if stream == self.update_stream:
-			if len(self.streams) == 0:
-				self.update_stream = None
-				print("no streams left for updates")
-			else:
-				self.update_stream = self.streams[0]
-		self.del_path(stream.incoming_path)
+		if stream.incoming_path:
+			self.del_path(stream.incoming_path)
 		if stream.outgoing_path:
 			self.del_path(stream.outgoing_path)
 		else:
@@ -164,18 +161,42 @@ class A2MXNode():
 		else:
 			print("new path\n ", path)
 
-		for stream in self.streams:
-			if stream == path.stream or (not stream.send_updates and stream != self.update_stream):
-				continue
-			stream.send(stream.request('path', **path.data))
-
 		self.paths.append(path)
+
+		if path.endpub not in self.nodes:
+			self.nodes[path.endpub] = []
+		nl = self.nodes[path.endpub]
+		if path in nl:
+			nl.remove(path)
+		nl.append(path)
+
 		try:
 			lastpath = self.paths[-2]
 		except IndexError:
 			return
 		if path.newest_timestamp < lastpath.newest_timestamp:
 			self.paths.sort(key=attrgetter('newest_timestamp'))
+
+		for stream in self.streams:
+			if stream == path.stream:
+				continue
+
+			send = True
+			if path.stream != None:
+				o2d = self.shortest_route(path.endpub, stream.remote_ecc.pubkey_hash())
+				o2m = self.shortest_route(path.endpub, self.ecc.pubkey_hash())
+				lo2d = len(o2d)
+				lo2m = len(o2m) + 1
+				if lo2d != 0 and lo2d < lo2m:
+					continue
+				elif lo2d == lo2m:
+					myhash = self.ecc.pubkey_hash()
+					for path in self.nodes[stream.remote_ecc.pubkey_hash()]:
+						if path.lasthop.pubkey_hash() < myhash:
+							send = False
+							break
+			if send:
+				stream.send(stream.request('path', **path.data))
 
 	def del_path(self, path):
 		path.markdelete()
@@ -187,21 +208,28 @@ class A2MXNode():
 		if len(self.streams) >= config['connections']:
 			return
 
+		axuris = []
+
 		for path in self.paths:
-			if path.axuri != None and not path.deleted and path.endpub != self.ecc.pubkey_hash():
+			if path.axuri != None and not path.deleted and path.endpub != self.ecc.pubkey_hash() and path.axuri not in axuris:
 				already_connected = False
 				for stream in self.streams:
 					if stream.remote_ecc.pubkey_hash() == path.endnode.pubkey_hash():
 						already_connected = True
 						break
 				if not already_connected:
-					A2MXStream(self, uri=path.axuri)
-					break
+					axuris.append(path.axuri)
+
+		try:
+			axuri = random.choice(axuris)
+		except IndexError:
+			return
+		A2MXStream(self, uri=axuri)
 
 	def find_routes_from(self, src, dst, maxhops=None):
-		if dst not in self.paths:
+		if dst not in self.nodes:
 			return []
-		pathlist = self.paths[dst]
+		pathlist = self.nodes[dst]
 		if len(pathlist) == 0:
 			return []
 
@@ -216,7 +244,7 @@ class A2MXNode():
 				lasthop = path.lasthop.pubkey_hash()
 				if lasthop == src:
 					ytp = thispath[:]
-					ytp.append(path.lasthop)
+					ytp.append(lasthop)
 					yield A2MXRoute(ytp)
 					continue
 				if lasthop == dst:
@@ -224,8 +252,8 @@ class A2MXNode():
 				if lasthop in thispath:
 					continue
 				tp = thispath[:]
-				tp.append(path.lasthop)
-				for p in find_path(self.paths[lasthop], tp, step+1):
+				tp.append(lasthop)
+				for p in find_path(self.nodes[lasthop], tp, step+1):
 					yield p
 		return find_path(pathlist)
 
