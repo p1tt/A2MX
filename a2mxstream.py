@@ -3,6 +3,7 @@ import struct
 import datetime
 from collections import OrderedDict
 import ssl
+import random
 
 from bson import BSON
 
@@ -35,7 +36,7 @@ def A2MXRequest_Signed(fn):
 	return fn
 
 class A2MXStream():
-	def __init__(self, node=None, uri=None, sock=None):
+	def __init__(self, node=None, uri=None, sock=None, pubkey_hash=None):
 		assert node != None
 		assert (uri == None and sock != None) or (uri != None and sock == None)
 		self.node = node
@@ -44,6 +45,7 @@ class A2MXStream():
 		self.bytes_in = 0
 		self.bytes_out = 0
 		self.cleanstate()
+		self.remote_b58_pubkey_hash = pubkey_hash
 
 		if sock:
 			self.sock = sock
@@ -61,7 +63,7 @@ class A2MXStream():
 		self.send = self.raw_send
 		self.remote_ecc = None
 		self.__connected = False
-		self.__remote_auth = False
+		self.__last_recv = None
 		self.__pub_sent = False
 		self.incoming_path = None
 		self.outgoing_path = None
@@ -70,9 +72,10 @@ class A2MXStream():
 		self.__select_w_fun = None
 
 	def __str__(self):
-		return '{} Remote: {} In: {}B Out: {}B{}'.format(
+		return '{} Remote: {} Path: {} In: {}B Out: {}B{}'.format(
 			'Incoming' if self.uri == None else 'Outgoing', self.remote_ecc.b58_pubkey_hash(),
-			self.bytes_in, self.bytes_out, ' disconnected' if not self.__connected else '')
+			self.outgoing_path, self.bytes_in, self.bytes_out,
+			' disconnected' if not self.__connected else '')
 
 	def connect(self):
 		assert self.__connected == False
@@ -87,6 +90,8 @@ class A2MXStream():
 			port = int(hostport[1])
 		else:
 			assert False
+		if '@' in host:
+			self.remote_b58_pubkey_hash, host = host.split('@')
 
 		print("connect to", self.uri)
 
@@ -116,6 +121,7 @@ class A2MXStream():
 		if not data:
 			self.connectionfailure()
 			return
+		self.__last_recv = datetime.datetime.now(datetime.timezone.utc)
 		self._data += data
 		self.bytes_in += len(data)
 		while len(self._data) >= self.handler[0]:
@@ -155,8 +161,9 @@ class A2MXStream():
 				return
 			except ssl.SSLWantWriteError:
 				return
-			except ssl.SSLError:
-				pass
+			except (ssl.SSLError, ConnectionResetError):
+				self.connectionfailure()
+				return
 			self.node.wremove(self)
 			self.__select_w_fun = None
 			self.__select_r_fun = None
@@ -181,6 +188,8 @@ class A2MXStream():
 		assert len(self._data) >= 4
 		length = struct.unpack_from('>L', self._data[:4])[0]
 		del self._data[:4]
+		if length == 0:
+			return
 		self.handler = (length, self.getdata)
 
 	def getdata(self, length):
@@ -201,25 +210,14 @@ class A2MXStream():
 			if not self.__pub_sent:	# send our public key if we haven't already
 				self.__send_pub()
 
-			# send the remote public key signed by us
-			self.send(ecc.sign(self.remote_ecc.get_pubkey()))
-		elif not self.__remote_auth:	# second data is our own public key signed by remote
-			auth = self.remote_ecc.verify(bytes(data), ecc.get_pubkey())
-			if not auth:
-				raise InvalidDataException('failed to verify remote')
-			self.__remote_auth = True
-			print("incoming" if self.uri == None else "outgoing", "connection up with", self.remote_ecc.b58_pubkey_hash())
-			if not self.node.add_stream(self):
-				print("add_stream == False")
-				self.shutdown()
-				return
-
 			p = A2MXPath(ecc, self.remote_ecc, axuri=config['publish_axuri'])
 			self.incoming_path = p
-			self.node.new_path(p)
+			self.send(self.request('path', **p.data))
 		else:
 			def parseRequest(request):
 				def exfn(fn, args, kwargs, signature):
+					if not self.outgoing_path and fn != 'path':
+						raise InvalidDataException('expecting path first')
 					f = getattr(self, fn, None)
 					if getattr(f, 'A2MXRequest__marker__', False) == True:
 						nextrequest = kwargs.pop('next', None)
@@ -233,7 +231,7 @@ class A2MXStream():
 								return
 							parseRequest(nextrequest.items())
 							return
-					print("Invalid request {}({}, {}) {}".format(fn, args, kwargs, 'signed' if sigok else 'invalid signed' if signature else 'unsigned'))
+					print("Invalid request {}({}, {}) {}".format(fn, args, kwargs, 'unsigned' if not signature else 'signed' if sigok else 'invalid signed'))
 
 				for fn, argtuple in request:
 					if len(argtuple) == 2:
@@ -312,9 +310,9 @@ class A2MXStream():
 			self.connectionfailure()
 		else:
 			self.bytes_out += len(data) + 4
-		if wremove:
-			self.node.wremove(self)
-			self.__select_w_fun = None
+			if wremove:
+				self.node.wremove(self)
+				self.__select_w_fun = None
 
 	def encrypted_send(self, data):
 		if not self.__connected:
@@ -337,13 +335,50 @@ class A2MXStream():
 		print(self.remote_ecc.b58_pubkey_hash() if self.remote_ecc else self.uri, "connection failure")
 		self.shutdown()
 
+	def keepalive(self):
+		self.node.selectloop.tadd(random.randint(20, 45), self.keepalive)
+		if self.__last_recv < datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=90):
+			print("last receive is longer than 90 seconds ago!")
+		self.raw_send(b'')
+
 	@A2MXRequest
 	def path(self, **kwargs):
 		if kwargs['lasthop'] == self.node.ecc.pubkey_c():
 			kwargs['lasthop'] = self.node.ecc
 		p = A2MXPath(**kwargs)
-		if p.lasthop.get_pubkey() == self.node.ecc.get_pubkey() and p.endnode.get_pubkey() == self.remote_ecc.get_pubkey():
-			self.outgoing_path = p
+
+		if not self.outgoing_path:
+			if p.lasthop.get_pubkey() == self.node.ecc.get_pubkey() and p.endnode.get_pubkey() == self.remote_ecc.get_pubkey():
+				self.outgoing_path = p
+				if p.deleted:
+					raise InvalidDataException('outgoing path is deleted?!')
+				if p.timestamp < datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=2):
+					raise InvalidDataException('outgoing path timestamp is older than 2 minutes!')
+
+				if self.remote_b58_pubkey_hash:
+					if self.remote_ecc.b58_pubkey_hash() != self.remote_b58_pubkey_hash:
+						raise InvalidDataException("remote public key hash doesn't match axuri given hash")
+				elif self.uri:
+					print("no axuri hash given, this is not recommended")
+
+				print("incoming" if self.uri == None else "outgoing", "connection up with", self.remote_ecc.b58_pubkey_hash())
+				if not self.node.add_stream(self):
+					print("add_stream == False")
+					self.shutdown()
+					return
+
+				try:
+					last_known_path = self.node.paths[-1]
+				except IndexError:
+					last_known_path = datetime.datetime.min
+				else:
+					last_known_path = last_known_path.newest_timestamp
+				r = self.request('pull', last_known_path)
+				self.send(r)
+				self.node.new_path(self.incoming_path)
+				self.keepalive()
+			else:
+				raise InvalidDataException("first path must be outgoing path")
 		p.stream = self
 		self.node.new_path(p)
 
@@ -358,9 +393,7 @@ class A2MXStream():
 
 	@A2MXRequest_Signed
 	def decline(self):
-		if not self.node.update_stream == self:
-			print("decline on non update stream.")
-			return
+		raise NotImplemented()
 
 	@A2MXRequest
 	def flush(self, node, timestamp, signature):
