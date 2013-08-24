@@ -6,6 +6,8 @@ import select
 import os
 import datetime
 import random
+import pickle
+from operator import attrgetter
 
 from ecc import ECC
 
@@ -68,9 +70,19 @@ class A2MXNode():
 	def __init__(self, selectloop):
 		self.selectloop = selectloop
 
-		self.paths = {}
+		self.paths = []
+		try:
+			with open(config['paths.db'], 'rb') as f:
+				try:
+					self.paths = pickle.load(f)
+				except EOFError:
+					pass
+		except FileNotFoundError:
+			pass
+
 		self.streams = []
 		self.nodes = {}
+		self.connected_nodes = {}
 		self.update_stream = None
 		self.ecc = ECC(pem_keyfile=config['key.pem'])
 
@@ -83,6 +95,10 @@ class A2MXNode():
 		assert self.ecc.pubkey_hash() == e.pubkey_hash()
 		self.selectloop.tadd(random.randint(5, 15), self.find_new_peers)
 
+	def shutdown(self):
+		with open(config['paths.db'], 'wb') as f:
+			pickle.dump(self.paths, f)
+
 	def add(self, selectable):
 		self.selectloop.add(selectable)
 	def remove(self, selectable):
@@ -93,24 +109,32 @@ class A2MXNode():
 		self.selectloop.wremove(selectable)
 
 	def add_stream(self, stream):
+		if stream.remote_ecc.pubkey_c() in self.connected_nodes:
+			return False
 		assert stream not in self.streams
 		self.streams.append(stream)
-		assert stream.remote_ecc.pubkey_c() not in self.nodes
-		self.nodes[stream.remote_ecc.pubkey_c()] = stream
+		self.connected_nodes[stream.remote_ecc.pubkey_c()] = stream
 
 		if self.update_stream == None:
 			self.update_stream = stream
-			r = stream.request('pull', datetime.datetime.min)
+			try:
+				last_known_path = self.paths[-1]
+			except IndexError:
+				last_known_path = datetime.datetime.min
+			else:
+				last_known_path = last_known_path.newest_timestamp # - datetime.timedelta(minutes=10)
+			r = stream.request('pull', last_known_path)
 			sr = stream.request('data', 'hello')
 			r = stream.request('sleep', 10, request=r, next=sr)
 			stream.send(r)
+		return True
 
 	def del_stream(self, stream):
 		if stream not in self.streams:
 			return
 		self.streams.remove(stream)
-		assert stream.remote_ecc.pubkey_c() in self.nodes and self.nodes[stream.remote_ecc.pubkey_c()] == stream
-		del self.nodes[stream.remote_ecc.pubkey_c()]
+		assert stream.remote_ecc.pubkey_c() in self.connected_nodes and self.connected_nodes[stream.remote_ecc.pubkey_c()] == stream
+		del self.connected_nodes[stream.remote_ecc.pubkey_c()]
 
 		if stream == self.update_stream:
 			if len(self.streams) == 0:
@@ -121,38 +145,37 @@ class A2MXNode():
 		self.del_path(stream.incoming_path)
 		if stream.outgoing_path:
 			self.del_path(stream.outgoing_path)
+		else:
+			print("NO OUTGOING?! :-(")
 
 	def new_path(self, path):
-		endpub = path.endpub
-		if endpub not in self.paths:
-			self.paths[endpub] = []
-			print("node discovered", path.endnode.b58_pubkey_hash())
-		pathlist = self.paths[endpub]
-
-		if path not in pathlist:
-			pathlist.append(path)
-			pathlist.sort()
-		else:
-			index = pathlist.index(path)
-			oldpath = pathlist[index]
-
-			if path.deleted and path.deleted >= oldpath.timestamp:
-				pass
-			elif path.timestamp <= oldpath.timestamp:
-				print("path", path, "known. ignoring.")
+		if path in self.paths:
+			oldindex = self.paths.index(path)
+			oldpath = self.paths[oldindex]
+			if path.equal(oldpath):
+				print("ignoring known path\n ", path)
 				return
+			if path.is_better_than(oldpath):
+				print("updating path\n  old:", oldpath, "\n  new:", path)
+				del self.paths[oldindex]
 			else:
-				if oldpath.deleted and path.timestamp < oldpath.deleted:
-					print("ignoring path with older timestamp than deleted")
-					return
-			print("updating path", path)
-			pathlist[index] = path
+				print("ignoring path with older timestamp as known path\n  old:", oldpath, "\n  new:", path)
+				return
+		else:
+			print("new path\n ", path)
 
-		for ostream in self.streams:
-			if ostream == path.stream or (not ostream.send_updates and ostream != self.update_stream):
+		for stream in self.streams:
+			if stream == path.stream or (not stream.send_updates and stream != self.update_stream):
 				continue
-			print("sending", path, "to", ostream.remote_ecc.b58_pubkey_hash())
-			ostream.send(ostream.request('path', **path.data))
+			stream.send(stream.request('path', **path.data))
+
+		self.paths.append(path)
+		try:
+			lastpath = self.paths[-2]
+		except IndexError:
+			return
+		if path.newest_timestamp < lastpath.newest_timestamp:
+			self.paths.sort(key=attrgetter('newest_timestamp'))
 
 	def del_path(self, path):
 		path.markdelete()
@@ -164,11 +187,7 @@ class A2MXNode():
 		if len(self.streams) >= config['connections']:
 			return
 
-		for pathlist in self.paths.values():
-			if len(pathlist) == 0:
-				continue
-			path = pathlist[0]
-
+		for path in self.paths:
 			if path.axuri != None and not path.deleted and path.endpub != self.ecc.pubkey_hash():
 				already_connected = False
 				for stream in self.streams:
@@ -290,4 +309,5 @@ try:
 except KeyboardInterrupt:
 #	selectloop.shutdown()
 	pass
+node.shutdown()
 

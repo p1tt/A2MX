@@ -55,6 +55,9 @@ class A2MXStream():
 			raise ValueError('Invalid arguments to A2MXStream')
 
 	def cleanstate(self):
+		self.node.wremove(self)
+		self.node.remove(self)
+
 		self.send = self.raw_send
 		self.remote_ecc = None
 		self.__connected = False
@@ -206,8 +209,11 @@ class A2MXStream():
 			if not auth:
 				raise InvalidDataException('failed to verify remote')
 			self.__remote_auth = True
-			self.node.add_stream(self)
 			print("incoming" if self.uri == None else "outgoing", "connection up with", self.remote_ecc.b58_pubkey_hash())
+			if not self.node.add_stream(self):
+				print("add_stream == False")
+				self.shutdown()
+				return
 
 			p = A2MXPath(ecc, self.remote_ecc, axuri=config['publish_axuri'])
 			self.incoming_path = p
@@ -326,12 +332,11 @@ class A2MXStream():
 			pass
 		self.sock.close()
 		self.node.del_stream(self)
-		self.node.remove(self)
 		self.cleanstate()
 
 	def connectionfailure(self):
-		self.shutdown()
 		print(self.remote_ecc.b58_pubkey_hash() if self.remote_ecc else self.uri, "connection failure")
+		self.shutdown()
 		if self.uri:
 			self.node.selectloop.tadd(5, self.connect)
 
@@ -347,11 +352,12 @@ class A2MXStream():
 
 	@A2MXRequest_Signed
 	def pull(self, timestamp):
-		print("pull from", self.remote_ecc.b58_pubkey_hash())
-		for pathlist in self.node.paths.values():
-			for path in pathlist:
-				r = self.request('path', **path.data)
-				self.send(r)
+		print("pull from", self.remote_ecc.b58_pubkey_hash(), timestamp)
+		for path in self.node.paths:
+			if path.newest_timestamp < timestamp:
+				continue
+			r = self.request('path', **path.data)
+			self.send(r)
 		self.send_updates = True
 
 	@A2MXRequest_Signed
