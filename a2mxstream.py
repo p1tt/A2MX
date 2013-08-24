@@ -26,6 +26,12 @@ def SSL(sock, server=False):
 
 def A2MXRequest(fn):
 	fn.A2MXRequest__marker__ = True
+	fn.A2MXRequest__signature_required__ = False
+	return fn
+
+def A2MXRequest_Signed(fn):
+	fn.A2MXRequest__marker__ = True
+	fn.A2MXRequest__signature_required__ = True
 	return fn
 
 class A2MXStream():
@@ -84,6 +90,7 @@ class A2MXStream():
 
 		self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.sock.setblocking(0)
+		self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
 		self.node.wadd(self)
 		try:
 			self.sock.connect((host, port))
@@ -207,14 +214,13 @@ class A2MXStream():
 			self.node.new_path(p)
 		else:
 			def parseRequest(request):
-				def exfn(fn, args, kwargs):
-					try:
-						f = getattr(self, fn)
-					except AttributeError:
-						pass
-					else:
-						if hasattr(f, 'A2MXRequest__marker__') and f.A2MXRequest__marker__ == True:
-							nextrequest = kwargs.pop('next', None)
+				def exfn(fn, args, kwargs, signature):
+					f = getattr(self, fn, None)
+					if getattr(f, 'A2MXRequest__marker__', False) == True:
+						nextrequest = kwargs.pop('next', None)
+						if f.A2MXRequest__signature_required__:
+							sigok = signature and self.remote_ecc.verify(signature, BSON.encode({ fn: (args, kwargs) }))
+						if not f.A2MXRequest__signature_required__ or sigok:
 							waitseconds = f(*args, **kwargs)
 							if waitseconds:
 								yield waitseconds
@@ -222,10 +228,17 @@ class A2MXStream():
 								return
 							parseRequest(nextrequest.items())
 							return
-					print("Invalid request {}({}, {})".format(fn, args, kwargs))
+					print("Invalid request {}({}, {}) {}".format(fn, args, kwargs, 'signed' if sigok else 'invalid signed' if signature else 'unsigned'))
 
-				for fn, (args, kwargs) in request:
-					yd = exfn(fn, args, kwargs)
+				for fn, argtuple in request:
+					if len(argtuple) == 2:
+						args, kwargs = argtuple
+						sig = None
+					elif len(argtuple) == 3:
+						args, kwargs, sig = argtuple
+					else:
+						raise InvalidDataException('Malformed request.')
+					yd = exfn(fn, args, kwargs, sig)
 					try:
 						value = next(yd)
 					except StopIteration:
@@ -254,8 +267,7 @@ class A2MXStream():
 		else:
 			raise ValueError('Invalid type in args {} = {}'.format(type(value), value))
 
-	@staticmethod
-	def request(fn, *args, request=None, **kwargs):
+	def request(self, fn, *args, request=None, **kwargs):
 		if request == None:
 			request = OrderedDict()
 		else:
@@ -266,6 +278,19 @@ class A2MXStream():
 		for k, v in kwargs.items():
 			kw[k] = A2MXStream.checkvalue(v)
 		request[fn] = (a, kw)
+
+		fun = getattr(self, fn, False)
+		if not fun or not getattr(fun, 'A2MXRequest__marker__', False):
+			raise ValueError('Unknown request: {}'.format(fn))
+		if fun.A2MXRequest__signature_required__:
+			if 'next' in kw:
+				r = request.copy()
+				del r[fn][1]['next']
+			else:
+				r = request
+			sigdata = BSON.encode(r)
+			sig = self.node.ecc.sign(sigdata)
+			request[fn] = (a, kw, sig)
 		return request
 
 	def raw_send(self, data, wremove=False):
@@ -320,7 +345,7 @@ class A2MXStream():
 		p.stream = self
 		self.node.new_path(p)
 
-	@A2MXRequest
+	@A2MXRequest_Signed
 	def pull(self, timestamp):
 		print("pull from", self.remote_ecc.b58_pubkey_hash())
 		for pathlist in self.node.paths.values():
@@ -329,27 +354,35 @@ class A2MXStream():
 				self.send(r)
 		self.send_updates = True
 
-	@A2MXRequest
+	@A2MXRequest_Signed
 	def decline(self):
 		if not self.node.update_stream == self:
 			print("decline on non update stream.")
 			return
 
 	@A2MXRequest
-	def flush(self, node):
+	def flush(self, node, timestamp, signature):
+		# this command must be signed by the originating node and invalidates all paths
+		# the node is part of.
 		raise NotImplemented()
 
 	@A2MXRequest
 	def sendto(self, node, data):
-		raise NotImplemented()
+		if node not in self.node.nodes:
+			print('cannot sendto {} node not directly connected to me.'.format(ECC(pubkey_compressed=node).b58_pubkey_hash()))
+			return
+		self.node.nodes[node].raw_send(data)
 
 	@A2MXRequest
 	def data(self, data):
 		print("got data command", data)
 
 	@A2MXRequest
+	def discard(self, *args, **kwargs):
+		pass
+
+	@A2MXRequest
 	def sleep(self, seconds):
 		print("sleep for {}".format(seconds))
 		return seconds
-
 

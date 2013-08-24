@@ -70,6 +70,7 @@ class A2MXNode():
 
 		self.paths = {}
 		self.streams = []
+		self.nodes = {}
 		self.update_stream = None
 		self.ecc = ECC(pem_keyfile=config['key.pem'])
 
@@ -94,6 +95,8 @@ class A2MXNode():
 	def add_stream(self, stream):
 		assert stream not in self.streams
 		self.streams.append(stream)
+		assert stream.remote_ecc.pubkey_c() not in self.nodes
+		self.nodes[stream.remote_ecc.pubkey_c()] = stream
 
 		if self.update_stream == None:
 			self.update_stream = stream
@@ -106,6 +109,9 @@ class A2MXNode():
 		if stream not in self.streams:
 			return
 		self.streams.remove(stream)
+		assert stream.remote_ecc.pubkey_c() in self.nodes and self.nodes[stream.remote_ecc.pubkey_c()] == stream
+		del self.nodes[stream.remote_ecc.pubkey_c()]
+
 		if stream == self.update_stream:
 			if len(self.streams) == 0:
 				self.update_stream = None

@@ -57,7 +57,7 @@ class ECC(pyelliptic.ECC):
 
 	def pubkey_c(self):
 		x, ybit = self.point_compress(self.pubkey_x, self.pubkey_y)
-		c = bytearray(b'A')
+		c = b'A'
 		c += b'X' if ybit else b'x'
 		c += x
 		return c
