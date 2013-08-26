@@ -332,11 +332,6 @@ for bind in config['bind']:
 for uri in config['targets']:
 	A2MXStream(node, uri=uri)
 
-if config['client_interface']:
-	from clientinterface import A2MXXMLRPCServer
-	xmlrpcserver = A2MXXMLRPCServer(node, config['client_interface'])
-	selectloop.add(xmlrpcserver)
-
 try:
 	while True:
 		selectloop.select()
