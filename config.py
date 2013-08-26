@@ -8,6 +8,7 @@ config = {
 	'client_interface': False,
 	'connections': 5,
 	'max_connections': 10,
+	'mongodb_uri': None
 }
 
 try:

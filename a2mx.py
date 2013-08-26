@@ -187,6 +187,12 @@ class A2MXNode():
 			nl.remove(path)
 		nl.append(path)
 
+	def sendto(self, node, data):
+		if node not in self.nodes:
+			print("cannot send to node {}".format(ECC.b58(node)))
+			return
+		self.nodes[node].raw_send(data)
+
 	def find_new_peers(self):
 		self.selectloop.tadd(random.randint(5, 15), self.find_new_peers)
 

@@ -7,13 +7,12 @@ import random
 
 from bson import BSON
 
-class InvalidDataException(Exception):
-	pass
-
 from config import config
 from ecc import ECC
 
 from a2mxpath import A2MXPath
+from a2mxdirect import A2MXDirect
+from a2mxcommon import InvalidDataException
 
 def SSL(sock, server=False):
 	context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
@@ -70,6 +69,7 @@ class A2MXStream():
 		self._data = None
 		self.__select_r_fun = None
 		self.__select_w_fun = None
+		self.__direct = False
 
 	def __str__(self):
 		return '{} Remote: {} Path: {} In: {}B Out: {}B{}'.format(
@@ -170,7 +170,7 @@ class A2MXStream():
 
 			self.__connected = True
 			self._data = bytearray()
-			self.handler = (4, self.getlength)
+			self.handler = (3, self.getlength)
 			if self.uri:
 				self.__send_pub()
 
@@ -185,12 +185,19 @@ class A2MXStream():
 		self.__pub_sent = True
 
 	def getlength(self, length):
-		assert len(self._data) >= 4
-		length = struct.unpack_from('>L', self._data[:4])[0]
-		del self._data[:4]
+		assert len(self._data) >= 3
+		ident, length = struct.unpack_from('>BH', self._data[:3])
+		del self._data[:3]
 		if length == 0:
 			return
-		self.handler = (length, self.getdata)
+		if ident == 0:
+			if self.__direct != False:
+				raise InvalidDataException('Cannot mix requests on one stream')
+			self.handler = (length, self.getdata)
+		elif ident == 1:
+			self.handler = (length, self.getdirectdata)
+		else:
+			raise InvalidDataException('Unknown ident')
 
 	def getdata(self, length):
 		assert len(self._data) >= length
@@ -254,6 +261,18 @@ class A2MXStream():
 								pass
 						self.node.selectloop.tadd(value, f)
 			parseRequest(self.parse(data).items())
+		self.handler = (3, self.getlength)
+
+	def getdirectdata(self, length):
+		assert len(self._data) >= length
+		data = self._data[:length]
+		del self._data[:length]
+
+		if self.__direct == False:
+			def send(data):
+				return self.raw_send(data, direct=True)
+			self.__direct = A2MXDirect(send)
+		self.__direct.process(data)
 		self.handler = (4, self.getlength)
 
 	@staticmethod
@@ -296,11 +315,11 @@ class A2MXStream():
 			request[fn] = (a, kw, sig)
 		return request
 
-	def raw_send(self, data, wremove=False):
+	def raw_send(self, data, wremove=False, direct=False):
 		if not self.__connected:
 			return
 		try:
-			self.sock.sendall(struct.pack('>L', len(data)) + data)
+			self.sock.sendall(struct.pack('>BH', 1 if direct else 0, len(data)) + data)
 		except ssl.SSLWantWriteError:
 			print('SSLWantWriteError raised, this codepath is heavily untested.')
 			self.__select_w_fun = (self.raw_send, [data], { 'wremove': True })
@@ -336,9 +355,12 @@ class A2MXStream():
 		self.shutdown()
 
 	def keepalive(self):
+		if not self.__connected:
+			return
 		self.node.selectloop.tadd(random.randint(20, 45), self.keepalive)
 		if self.__last_recv < datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=90):
 			print("last receive is longer than 90 seconds ago!")
+		print(datetime.datetime.now(), "keepalive")
 		self.raw_send(b'')
 
 	@A2MXRequest
@@ -403,10 +425,7 @@ class A2MXStream():
 
 	@A2MXRequest
 	def sendto(self, node, data):
-		if node not in self.node.nodes:
-			print('cannot sendto {} node not directly connected to me.'.format(ECC(pubkey_compressed=node).b58_pubkey_hash()))
-			return
-		self.node.nodes[node].raw_send(data)
+		self.node.sendto(node, data)
 
 	@A2MXRequest
 	def data(self, data):

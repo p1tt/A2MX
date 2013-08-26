@@ -3,7 +3,7 @@ import datetime
 from bson import BSON
 
 from ecc import ECC
-from a2mxstream import InvalidDataException
+from a2mxcommon import InvalidDataException
 
 def now():
 	return BSON.decode(BSON.encode({'t': datetime.datetime.now(datetime.timezone.utc)}), tz_aware=True)['t']

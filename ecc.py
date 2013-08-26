@@ -3,6 +3,8 @@ import hashlib
 import base64
 from pyasn1.codec.der import decoder
 
+from a2mxcommon import InvalidDataException
+
 b58chars = b'123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
 def pem2rawkeys(filename):
