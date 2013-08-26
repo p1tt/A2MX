@@ -271,7 +271,7 @@ class A2MXStream():
 		if self.__direct == False:
 			def send(data):
 				return self.raw_send(data, direct=True)
-			self.__direct = A2MXDirect(send)
+			self.__direct = A2MXDirect(self.node, send)
 		self.__direct.process(data)
 		self.handler = (4, self.getlength)
 

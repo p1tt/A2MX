@@ -27,6 +27,7 @@ else:
 	raise ValueError('invalid arguments')
 
 ecc = ECC(pem_keyfile=keyfile)
+print("I am", ecc.b58_pubkey_hash())
 
 def SSL(sock):
 	context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
@@ -90,9 +91,10 @@ auth = send({'authbytes': authbytes, 'sig': sig})
 print("auth", auth)
 assert auth == True
 
-path = A2MXPath(ecc, remote_ecc)
-pathup = send(request('path', **path.data))
-print("path update", pathup)
+if remote_ecc.pubkey_c() != ecc.pubkey_c():
+	path = A2MXPath(ecc, remote_ecc)
+	pathup = send(request('path', **path.data))
+	print("path update", pathup)
 
 docs = send(request('find', { 'timestamp': { '$gt': datetime.datetime.min }}, {}))
 for doc in docs:

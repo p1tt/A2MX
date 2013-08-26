@@ -28,19 +28,31 @@ else:
 
 def A2MXDirectStore(node, data):
 	b58node = ECC.b58(node)
-	if b58node not in mongoclient.database_names():
+	if mongoclient == None or b58node not in mongoclient.database_names():
 		raise A2MXDirectException('Unknown node {}'.format(b58node))
 	# FIXME check if data already in DB
 	mongoclient[b58node]['inbox'].insert({ 'incoming_timestamp': datetime.datetime.now(datetime.timezone.utf), 'data': data })
 
 def A2MXDirectPaths():
 	for node in mongoclient.database_names():
-		mongoclient[node]['path'].find()
+		if node == 'admin':
+			continue
+		v = mongoclient[node]['path'].find()
+		if v.count() == 0:
+			continue
+		if v.count() != 2:
+			print("invalid path spec in DB for", node)
+			continue
+		for p in v:
+			if p:
+				del p['_id']
+				yield A2MXPath(**p)
 
 class A2MXDirect():
-	def __init__(self, sendfun):
+	def __init__(self, node, sendfun):
 		if mongoclient == None:
 			raise A2MXDirectException('No MongoDB connection available.')
+		self.node = node
 		self.sendfun = sendfun
 		self.ecc = None
 		self.auth = False
@@ -76,7 +88,7 @@ class A2MXDirect():
 			self.db = mongoclient[self.ecc.b58_pubkey_hash()]
 			print("got direct to", self.ecc.b58_pubkey_hash())
 			self.auth = random.randint(0, 0xFFFFFFFF).to_bytes(4, byteorder='big')
-			return { 'auth': self.auth, 'pubkey': self.ecc.pubkey_c() }
+			return { 'auth': self.auth, 'pubkey': self.node.ecc.pubkey_c() }
 		if isinstance(self.auth, bytes):
 			sigdata = self.auth + bs['authbytes']
 			verify = self.ecc.verify(bs['sig'], sigdata)
@@ -98,8 +110,16 @@ class A2MXDirect():
 	@A2MXDirectRequest
 	def path(self, **kwargs):
 		p = A2MXPath(**kwargs)
+		if p.endnode.pubkey_c() == self.node.ecc.pubkey_c():
+			raise A2MXDirectException('Invalid path to myself')
+
+		op = A2MXPath(self.node.ecc, self.ecc)
+
 		self.db['path'].remove()
 		self.db['path'].insert(p.data)
+		self.db['path'].insert(op.data)
+		self.node.new_path(p)
+		self.node.new_path(op)
 		return True
 
 	@A2MXDirectRequest
@@ -109,4 +129,8 @@ class A2MXDirect():
 	@A2MXDirectRequest
 	def save(self, doc):
 		return self.db['inbox'].save(doc)
+
+	@A2MXDirectRequest
+	def sendto(self, node, data):
+		self.node.sendto(node, data)
 

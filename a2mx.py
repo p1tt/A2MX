@@ -15,6 +15,7 @@ from ecc import ECC
 
 from config import config
 from a2mxstream import A2MXStream
+import a2mxdirect
 
 class Unbuffered:
 	def __init__(self, stream):
@@ -102,8 +103,10 @@ class A2MXNode():
 			cwd = os.getcwd().rsplit('/', 1)[1]
 			sys.stdout.write("\x1b]2;{}: {}\x07".format(cwd, mypub))
 		print("I am", mypub)
-		e = ECC(pubkey_compressed=self.ecc.pubkey_c())
-		assert self.ecc.pubkey_hash() == e.pubkey_hash()
+
+		for path in a2mxdirect.A2MXDirectPaths():
+			self.new_path(path)
+
 		self.selectloop.tadd(random.randint(5, 15), self.find_new_peers)
 
 	def savepaths(self):
@@ -189,7 +192,11 @@ class A2MXNode():
 
 	def sendto(self, node, data):
 		if node not in self.nodes:
-			print("cannot send to node {}".format(ECC.b58(node)))
+			try:
+				a2mxdirect.A2MXDirectStore(node, data)
+				print("stored data for {}".format(ECC.b58(node)))
+			except A2MXDirectException:
+				print("cannot send to node {}".format(ECC.b58(node)))
 			return
 		self.nodes[node].raw_send(data)
 
