@@ -34,6 +34,8 @@ def A2MXDirectStore(node, data):
 	mongoclient[b58node]['inbox'].insert({ 'incoming_timestamp': datetime.datetime.now(datetime.timezone.utf), 'data': data })
 
 def A2MXDirectPaths():
+	if mongoclient == None:
+		return
 	for node in mongoclient.database_names():
 		if node == 'admin':
 			continue

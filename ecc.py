@@ -54,30 +54,14 @@ class ECC(pyelliptic.ECC):
 			privkey, pubkey = pem2rawkeys(pem_keyfile)
 			pubkey_x, pubkey_y = self.oct2point(pubkey)
 		elif pubkey_compressed:
-			pubkey_x, pubkey_y = self.key_uncompress(pubkey_compressed)
+			pubkey_x, pubkey_y = self.oct2point(bytes(pubkey_compressed))
 		self._set_keys(pubkey_x, pubkey_y, privkey)
 
 	def pubkey_c(self):
-		x, ybit = self.point_compress(self.pubkey_x, self.pubkey_y)
-		c = b'A'
-		c += b'X' if ybit else b'x'
-		c += x
-		return c
-
-	def key_uncompress(self, data):
-		if chr(data[0]) != 'A': 
-			raise InvalidDataException('data[0] != A')
-		if chr(data[1]) == 'X':
-			ybit = 1
-		elif chr(data[1]) == 'x':
-			ybit = 0
-		else:
-			raise InvalidDataException('data[1] != X|x')
-		x, y = self.point_uncompress(bytes(data[2:]), ybit)
-		return (x, y)
+		return self.point_compress(self.pubkey_x, self.pubkey_y)
 
 	def pubkey_hash(self):
-		data = hashlib.sha512(self.get_pubkey()).digest()
+		data = hashlib.sha512(self.pubkey_c()).digest()
 		h = hashlib.new('RIPEMD160', data).digest()
 		return h
 
