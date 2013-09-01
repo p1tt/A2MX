@@ -5,6 +5,11 @@ from collections import OrderedDict
 import pymongo
 from bson import BSON
 
+from pyasn1.type import univ
+from pyasn1.codec.der import encoder
+from pyasn1.codec.der import decoder
+from pyasn1.error import PyAsn1Error
+
 from config import config
 from ecc import ECC
 
@@ -92,8 +97,22 @@ class A2MXDirect():
 			self.auth = random.randint(0, 0xFFFFFFFF).to_bytes(4, byteorder='big')
 			return { 'auth': self.auth, 'pubkey': self.node.ecc.pubkey_c() }
 		if isinstance(self.auth, bytes):
-			sigdata = self.auth + bs['authbytes']
-			verify = self.ecc.verify(bs['sig'], sigdata)
+			sigdata = self.auth + bs['auth']
+			# OpenSSL uses ASN.1 encoded signature, try to ASN.1 decode it, if it fails assume signature is in raw format and encode it
+			try:
+				decoder.decode(bs['sig'])
+			except PyAsn1Error:
+				l = len(bs['sig'])
+				assert l % 2 == 0
+				l = int(l / 2)
+				rb = bs['sig'][:l]
+				sb = bs['sig'][l:]
+				r = int.from_bytes(rb, byteorder='big')
+				s = int.from_bytes(sb, byteorder='big')
+				sig = encoder.encode(univ.Sequence().setComponentByPosition(0, univ.Integer(r)).setComponentByPosition(1, univ.Integer(s)))
+			else:
+				sig = bs['sig']
+			verify = self.ecc.verify(sig, sigdata)
 			if not verify:
 				raise A2MXDirectException('Not authenticated')
 			self.auth = True

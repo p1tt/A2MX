@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import os
 import sys
 import socket
 import ssl
@@ -85,10 +86,9 @@ auth = r['auth']
 pubkey = r['pubkey']
 remote_ecc = ECC(pubkey_compressed=pubkey)
 
-authbytes = random.randint(0, 0xFFFFFFFF).to_bytes(4, byteorder='big')
+authbytes = os.urandom(32)
 sig = ecc.sign(auth + authbytes)
-auth = send({'authbytes': authbytes, 'sig': sig})
-print("auth", auth)
+auth = send({'auth': authbytes, 'sig': sig})
 assert auth == True
 
 if remote_ecc.pubkey_c() != ecc.pubkey_c():
