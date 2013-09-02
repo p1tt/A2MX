@@ -96,3 +96,7 @@ if __name__ == '__main__':
 	b58 = ECC.b58(test)
 	b58test = ECC.b58decode(b58)
 	assert test == b58test
+
+	b = ECC.b58(b'12345')
+	print(b, ECC.b58decode(b), ECC.b58decode(b'2f5KXiroLm37usGLonuWS9KGDazc'))
+

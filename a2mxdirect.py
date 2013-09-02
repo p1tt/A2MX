@@ -173,6 +173,22 @@ class A2MXDirect():
 	def save(self, doc):
 		return self.db['inbox'].save(doc)
 
+
+	@A2MXDirectRequest
+	def find_routes(self, src, dst, min_hops, max_hops, max_count):
+		if not src or src == b'\x00':
+			src = self.node.ecc.pubkey_hash()
+		print("find_routes_from", ECC.b58(src), ECC.b58(dst), max_hops)
+		routes = self.node.find_routes_from(src, dst, max_hops)
+		send = []
+		for route in routes:
+			if len(route) < min_hops:
+				continue
+			send.append(route.routes)
+			if len(send) >= max_count:
+				break
+		return send
+
 	@A2MXDirectRequest
 	def sendto(self, node, data):
 		self.node.sendto(node, data)

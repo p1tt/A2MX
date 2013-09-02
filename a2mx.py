@@ -230,27 +230,29 @@ class A2MXNode():
 		pathlist = self.nodes[dst]
 		if len(pathlist) == 0:
 			return []
+		dst_pubc = pathlist[0].endnode.pubkey_c()
 
 		def find_path(pathlist, thispath=None, step=1):
 			if maxhops != None and step >= maxhops:
 				return
 			if thispath == None:
-				thispath = [dst]
+				thispath = [dst_pubc]
 			for path in pathlist:
 				if path.deleted:
 					continue
 				lasthop = path.lasthop.pubkey_hash()
+				lasthop_pubc = path.lasthop.pubkey_c()
 				if lasthop == src:
 					ytp = thispath[:]
-					ytp.append(lasthop)
+					ytp.append(lasthop_pubc)
 					yield A2MXRoute(ytp)
 					continue
 				if lasthop == dst:
 					continue
-				if lasthop in thispath:
+				if lasthop_pubc in thispath:
 					continue
 				tp = thispath[:]
-				tp.append(lasthop)
+				tp.append(lasthop_pubc)
 				for p in find_path(self.nodes[lasthop], tp, step+1):
 					yield p
 		return find_path(pathlist)
