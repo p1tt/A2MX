@@ -349,9 +349,8 @@ class A2MXStream():
 			pass
 		self.sock.close()
 		self.node.del_stream(self)
-		if self.__direct == False:
-			return
-		self.__direct.disconnected()
+		if self.__direct != False:
+			self.__direct.disconnected()
 		self.cleanstate()
 
 	def connectionfailure(self):
