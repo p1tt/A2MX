@@ -15,6 +15,9 @@ from ecc import ECC
 
 from a2mxpath import A2MXPath
 
+def now():
+	return BSON.decode(BSON.encode({'t': datetime.datetime.now(datetime.timezone.utc)}), tz_aware=True)['t']
+
 class A2MXDirectException(Exception):
 	pass
 
@@ -94,13 +97,12 @@ class A2MXDirect():
 			self.ecc = ECC(pubkey_compressed=bs['access'])
 			if self.ecc.b58_pubkey_hash() not in mongoclient.database_names():
 				return { 'error': 'Unknown Node {}'.format(self.ecc.b58_pubkey_hash()) }
-				raise A2MXDirectException('Unknown Node {}'.format(self.ecc.b58_pubkey_hash()))
 			self.db = mongoclient[self.ecc.b58_pubkey_hash()]
 			print("got direct to", self.ecc.b58_pubkey_hash())
-			self.auth = random.randint(0, 0xFFFFFFFF).to_bytes(4, byteorder='big')
+			self.auth = now()
 			return { 'auth': self.auth, 'pubkey': self.node.ecc.pubkey_c() }
-		if isinstance(self.auth, bytes):
-			sigdata = self.auth + bs['auth']
+		if isinstance(self.auth, datetime.datetime):
+			sigdata = BSON.encode({ 'auth': self.auth })
 			# OpenSSL uses ASN.1 encoded signature, try to ASN.1 decode it, if it fails assume signature is in raw format and encode it
 			try:
 				decoder.decode(bs['sig'])
@@ -120,12 +122,10 @@ class A2MXDirect():
 			lsig = self.node.ecc.sign(sigdata)
 			if not verify:
 				return { 'error': 'Not authenticated' }
-				raise A2MXDirectException('Not authenticated')
 			self.auth = True
 			return { 'sig': lsig }
 		if self.auth != True:
 			return { 'error': 'Not authenticated' }
-			raise A2MXDirectException('Not authenticated')
 
 		if len(bs) > 1:
 			raise A2MXDirectException('Only one command at a time supported')
@@ -178,7 +178,6 @@ class A2MXDirect():
 	def find_routes(self, src, dst, min_hops, max_hops, max_count):
 		if not src or src == b'\x00':
 			src = self.node.ecc.pubkey_hash()
-		print("find_routes_from", ECC.b58(src), ECC.b58(dst), max_hops)
 		routes = self.node.find_routes_from(src, dst, max_hops)
 		send = []
 		for route in routes:
