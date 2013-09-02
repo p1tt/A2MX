@@ -349,10 +349,14 @@ class A2MXStream():
 			pass
 		self.sock.close()
 		self.node.del_stream(self)
+		if self.__direct == False:
+			return
+		self.__direct.disconnected()
 		self.cleanstate()
 
 	def connectionfailure(self):
-		print(self.remote_ecc.b58_pubkey_hash() if self.remote_ecc else self.uri, "connection failure")
+		if self.__direct == False:
+			print(self.remote_ecc.b58_pubkey_hash() if self.remote_ecc else self.uri, "connection failure")
 		self.shutdown()
 
 	def keepalive(self):

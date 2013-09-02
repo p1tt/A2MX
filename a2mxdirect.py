@@ -34,12 +34,40 @@ else:
 		print("failed to connect to mongodb_uri {}: {}".format(config['mongodb_uri'], e))
 		mongoclient = None
 
+class A2MXConnectedClients:
+	def __init__(self):
+		self.clients = {}
+
+	def add(self, direct_instance):
+		client_hash = direct_instance.ecc.pubkey_hash()
+
+		if client_hash not in self.clients:
+			self.clients[client_hash] = []
+		self.clients[client_hash].append(direct_instance)
+
+	def remove(self, direct_instance):
+		client_hash = direct_instance.ecc.pubkey_hash()
+		self.clients[client_hash].remove(direct_instance)
+
+	def online(self, client_hash):
+		if client_hash not in self.clients:
+			return []
+		return self.clients[client_hash]
+
+connected_clients = A2MXConnectedClients()
+
 def A2MXDirectStore(node, data):
 	b58node = ECC.b58(node)
 	if mongoclient == None or b58node not in mongoclient.database_names():
 		raise A2MXDirectException('Unknown node {}'.format(b58node))
 	# FIXME check if data already in DB
-	mongoclient[b58node]['inbox'].insert({ 'incoming_timestamp': datetime.datetime.now(datetime.timezone.utf), 'data': data })
+	_id = mongoclient[b58node]['inbox'].insert({ 'timestamp': datetime.datetime.now(datetime.timezone.utf), 'data': data })
+
+	rid = int(0).to_bytes(4)
+	data = rid + BSON.encode({ '_id': _id })
+	clients = connected_clients.online(node)
+	for client in clients:
+		client.sendfun(data)
 
 def A2MXDirectPaths():
 	if mongoclient == None:
@@ -66,6 +94,11 @@ class A2MXDirect():
 		self.sendfun = sendfun
 		self.ecc = None
 		self.auth = False
+
+	def disconnected(self):
+		if self.auth:
+			connected_clients.remove(self)
+		print("A2MXDirect disconnect", self.ecc.b58_pubkey_hash() if self.ecc else "unknown", "authenticated" if self.auth == True else "not authenticated")
 
 	def process(self, data):
 		rid = data[:4]
@@ -122,8 +155,12 @@ class A2MXDirect():
 			lsig = self.node.ecc.sign(sigdata)
 			if not verify:
 				return { 'error': 'Not authenticated' }
+
 			self.auth = True
+			connected_clients.add(self)
+
 			return { 'sig': lsig }
+
 		if self.auth != True:
 			return { 'error': 'Not authenticated' }
 
@@ -172,7 +209,6 @@ class A2MXDirect():
 	@A2MXDirectRequest
 	def save(self, doc):
 		return self.db['inbox'].save(doc)
-
 
 	@A2MXDirectRequest
 	def find_routes(self, src, dst, min_hops, max_hops, max_count):
