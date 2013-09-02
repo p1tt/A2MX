@@ -70,6 +70,8 @@ class A2MXDirect():
 		try:
 			value = self.process_bson(bs)
 		except Exception as e:
+			import traceback
+			traceback.print_exc()
 			value = None
 			error = 'Exception occured: {} {}'.format(str(type(e)), str(e))
 		else:
@@ -91,6 +93,7 @@ class A2MXDirect():
 		if self.ecc == None:
 			self.ecc = ECC(pubkey_compressed=bs['access'])
 			if self.ecc.b58_pubkey_hash() not in mongoclient.database_names():
+				return { 'error': 'Unknown Node {}'.format(self.ecc.b58_pubkey_hash()) }
 				raise A2MXDirectException('Unknown Node {}'.format(self.ecc.b58_pubkey_hash()))
 			self.db = mongoclient[self.ecc.b58_pubkey_hash()]
 			print("got direct to", self.ecc.b58_pubkey_hash())
@@ -102,6 +105,7 @@ class A2MXDirect():
 			try:
 				decoder.decode(bs['sig'])
 			except PyAsn1Error:
+				print("TRY TO CONVERT SIGNATURE, NON VERIFIED CODE!")
 				l = len(bs['sig'])
 				assert l % 2 == 0
 				l = int(l / 2)
@@ -109,15 +113,18 @@ class A2MXDirect():
 				sb = bs['sig'][l:]
 				r = int.from_bytes(rb, byteorder='big')
 				s = int.from_bytes(sb, byteorder='big')
-				sig = encoder.encode(univ.Sequence().setComponentByPosition(0, univ.Integer(r)).setComponentByPosition(1, univ.Integer(s)))
+				rsig = encoder.encode(univ.Sequence().setComponentByPosition(0, univ.Integer(r)).setComponentByPosition(1, univ.Integer(s)))
 			else:
-				sig = bs['sig']
-			verify = self.ecc.verify(sig, sigdata)
+				rsig = bs['sig']
+			verify = self.ecc.verify(rsig, sigdata)
+			lsig = self.node.ecc.sign(sigdata)
 			if not verify:
+				return { 'error': 'Not authenticated' }
 				raise A2MXDirectException('Not authenticated')
 			self.auth = True
-			return True
+			return { 'sig': lsig }
 		if self.auth != True:
+			return { 'error': 'Not authenticated' }
 			raise A2MXDirectException('Not authenticated')
 
 		if len(bs) > 1:
@@ -126,7 +133,22 @@ class A2MXDirect():
 			f = getattr(self, k, None)
 			if getattr(f, 'A2MXDirectRequest__marker__', False) != True:
 				raise A2MXDirectException('Invalid request {}'.format(k))
-			return f(*v[0], **v[1])
+			args = None
+			kwargs = None
+			for a in v:
+				if isinstance(a, (tuple, list)):
+					if args == None:
+						args = a
+					else:
+						raise A2MXDirectException('Invalid arguments')
+				if isinstance(a, (dict, OrderedDict)):
+					if kwargs == None:
+						kwargs = a
+					else:
+						raise A2MXDirectException('Invalid arguments')
+			args = args if args else []
+			kwargs = kwargs if kwargs else {}
+			return f(*args, **kwargs)
 
 	@A2MXDirectRequest
 	def path(self, **kwargs):

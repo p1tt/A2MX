@@ -82,14 +82,17 @@ def send(request):
 		return bs
 
 r = send({'access': ecc.pubkey_c()})
-auth = r['auth']
+rauth = r['auth']
 pubkey = r['pubkey']
 remote_ecc = ECC(pubkey_compressed=pubkey)
 
-authbytes = os.urandom(32)
-sig = ecc.sign(auth + authbytes)
-auth = send({'auth': authbytes, 'sig': sig})
-assert auth == True
+lauth = os.urandom(32)
+sigdata = rauth + lauth
+sig = ecc.sign(sigdata)
+auth = send({'auth': lauth, 'sig': sig})
+assert 'sig' in auth
+peer_verified = remote_ecc.verify(auth['sig'], sigdata)
+assert peer_verified == True
 
 if remote_ecc.pubkey_c() != ecc.pubkey_c():
 	path = A2MXPath(ecc, remote_ecc)

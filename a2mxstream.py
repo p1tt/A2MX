@@ -17,6 +17,7 @@ from a2mxcommon import InvalidDataException
 def SSL(sock, server=False):
 	context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
 	context.verify_mode = ssl.CERT_NONE
+#	context.set_verify(ssl.VERIFY_PEER | ssl.VERIFY_FAIL_IF_NO_PEER_CERT | ssl.VERIFY_CLIENT_ONCE, callback_func)
 	context.set_ecdh_curve('secp521r1')
 	context.options = ssl.OP_SINGLE_DH_USE | ssl.OP_SINGLE_ECDH_USE
 	context.set_ciphers('ECDHE-ECDSA-AES256-SHA')

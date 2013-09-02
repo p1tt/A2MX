@@ -55,6 +55,7 @@ class ECC(pyelliptic.ECC):
 			pubkey_x, pubkey_y = self.oct2point(pubkey)
 		elif pubkey_compressed:
 			pubkey_x, pubkey_y = self.oct2point(bytes(pubkey_compressed))
+		assert pubkey_x != None and pubkey_y != None
 		self._set_keys(pubkey_x, pubkey_y, privkey)
 
 	def pubkey_c(self):

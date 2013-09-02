@@ -1,4 +1,5 @@
 import datetime
+from collections import OrderedDict
 
 from bson import BSON
 
@@ -21,7 +22,7 @@ class A2MXPath():
 		if not isinstance(endnode, ECC):
 			self.endnode = ECC(pubkey_compressed=endnode)
 			if signature == None:
-				raise ValueError()
+				raise ValueError('missing signature')
 		else:
 			self.endnode = endnode
 
@@ -32,7 +33,12 @@ class A2MXPath():
 		else:
 			self.timestamp = now()
 
-		sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey(), self.timestamp.isoformat().encode('ascii')))
+#		sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey(), self.timestamp.isoformat().encode('ascii')))
+		od = OrderedDict()
+		od['endnode'] = self.endnode.pubkey_c()
+		od['lasthop'] = self.lasthop.pubkey_c()
+		od['timestamp'] = self.timestamp
+		sigdata = BSON.encode(od)
 		if signature == None:
 			self.signature = self.endnode.sign(sigdata)
 		else:
