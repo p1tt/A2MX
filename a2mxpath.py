@@ -33,12 +33,11 @@ class A2MXPath():
 		else:
 			self.timestamp = now()
 
-#		sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey(), self.timestamp.isoformat().encode('ascii')))
-		od = OrderedDict()
-		od['endnode'] = self.endnode.pubkey_c()
-		od['lasthop'] = self.lasthop.pubkey_c()
-		od['timestamp'] = self.timestamp
-		sigdata = BSON.encode(od)
+		self.__sigod = OrderedDict()
+		self.__sigod['endnode'] = self.endnode.pubkey_c()
+		self.__sigod['lasthop'] = self.lasthop.pubkey_c()
+		self.__sigod['timestamp'] = self.timestamp
+		sigdata = BSON.encode(self.__sigod)
 		if signature == None:
 			self.signature = self.endnode.sign(sigdata)
 		else:
@@ -59,7 +58,8 @@ class A2MXPath():
 			if self.deleted < self.timestamp:
 				raise ValueError('deleted timestamp is older than timestamp')
 
-			sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey(), self.timestamp.isoformat().encode('ascii'), self.deleted.isoformat().encode('ascii')))
+			self.__sigod['deleted'] = self.deleted
+			sigdata = BSON.encode(self.__sigod)
 			verify = self.lasthop.verify(delete_signature, sigdata) or self.endnode.verify(delete_signature, sigdata)
 			if not verify:
 				raise InvalidDataException('delete signature failure')
@@ -94,8 +94,11 @@ class A2MXPath():
 		return self.deleted or self.timestamp
 
 	def markdelete(self):
+		assert self.deleted == None
+		assert 'deleted' not in self.__sigod
 		self.deleted = now()
-		sigdata = b''.join((self.endnode.get_pubkey(), self.lasthop.get_pubkey(), self.timestamp.isoformat().encode('ascii'), self.deleted.isoformat().encode('ascii')))
+		self.__sigod['deleted'] = self.deleted
+		sigdata = BSON.encode(self.__sigod)
 		if self.lasthop.privkey:
 			self.delete_signature = self.lasthop.sign(sigdata)
 		elif self.endnode.privkey:
