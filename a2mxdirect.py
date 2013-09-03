@@ -226,5 +226,5 @@ class A2MXDirect():
 
 	@A2MXDirectRequest
 	def sendto(self, node, data):
-		self.node.sendto(node, data)
+		return self.node.sendto(node, data)
 

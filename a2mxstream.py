@@ -13,6 +13,7 @@ from ecc import ECC
 from a2mxpath import A2MXPath
 from a2mxdirect import A2MXDirect
 from a2mxcommon import InvalidDataException
+from a2mxrequest import A2MXRequest
 
 def SSL(sock, server=False):
 	context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
@@ -25,16 +26,6 @@ def SSL(sock, server=False):
 		context.load_cert_chain(config['cert.pem'], config['key.pem'])
 	return context.wrap_socket(sock, server_side=server, do_handshake_on_connect=False)
 
-def A2MXRequest(fn):
-	fn.A2MXRequest__marker__ = True
-	fn.A2MXRequest__signature_required__ = False
-	return fn
-
-def A2MXRequest_Signed(fn):
-	fn.A2MXRequest__marker__ = True
-	fn.A2MXRequest__signature_required__ = True
-	return fn
-
 class A2MXStream():
 	def __init__(self, node=None, uri=None, sock=None, pubkey_hash=None):
 		assert node != None
@@ -46,6 +37,7 @@ class A2MXStream():
 		self.bytes_out = 0
 		self.cleanstate()
 		self.remote_b58_pubkey_hash = pubkey_hash
+		self.request = A2MXRequest(self.node, self)
 
 		if sock:
 			self.sock = sock
@@ -220,48 +212,9 @@ class A2MXStream():
 
 			p = A2MXPath(ecc, self.remote_ecc, axuri=config['publish_axuri'])
 			self.incoming_path = p
-			self.send(self.request('path', **p.data))
+			self.send(self.request.request('path', **p.data))
 		else:
-			def parseRequest(request):
-				def exfn(fn, args, kwargs, signature):
-					if not self.outgoing_path and fn != 'path':
-						raise InvalidDataException('expecting path first')
-					f = getattr(self, fn, None)
-					if getattr(f, 'A2MXRequest__marker__', False) == True:
-						nextrequest = kwargs.pop('next', None)
-						if f.A2MXRequest__signature_required__:
-							sigok = signature and self.remote_ecc.verify(signature, BSON.encode({ fn: (args, kwargs) }))
-						if not f.A2MXRequest__signature_required__ or sigok:
-							waitseconds = f(*args, **kwargs)
-							if waitseconds:
-								yield waitseconds
-							if not nextrequest:
-								return
-							parseRequest(nextrequest.items())
-							return
-					print("Invalid request {}({}, {}) {}".format(fn, args, kwargs, 'unsigned' if not signature else 'signed' if sigok else 'invalid signed'))
-
-				for fn, argtuple in request:
-					if len(argtuple) == 2:
-						args, kwargs = argtuple
-						sig = None
-					elif len(argtuple) == 3:
-						args, kwargs, sig = argtuple
-					else:
-						raise InvalidDataException('Malformed request.')
-					yd = exfn(fn, args, kwargs, sig)
-					try:
-						value = next(yd)
-					except StopIteration:
-						pass
-					else:
-						def f():
-							try:
-								next(yd)
-							except StopIteration:
-								pass
-						self.node.selectloop.tadd(value, f)
-			parseRequest(self.parse(data).items())
+			self.request.parseRequest(data)
 		self.handler = (3, self.getlength)
 
 	def getdirectdata(self, length):
@@ -275,46 +228,6 @@ class A2MXStream():
 			self.__direct = A2MXDirect(self.node, send)
 		self.__direct.process(data)
 		self.handler = (4, self.getlength)
-
-	@staticmethod
-	def parse(data):
-		d = BSON.decode(data, as_class=OrderedDict, tz_aware=True)
-		return d
-
-	@staticmethod
-	def checkvalue(value):
-		if isinstance(value, bytearray):
-			return bytes(value)
-		elif isinstance(value, (int, bytes, str, datetime.datetime, type(None), dict, OrderedDict)):
-			return value
-		else:
-			raise ValueError('Invalid type in args {} = {}'.format(type(value), value))
-
-	def request(self, fn, *args, request=None, **kwargs):
-		if request == None:
-			request = OrderedDict()
-		else:
-			assert isinstance(request, OrderedDict)
-
-		a = [ A2MXStream.checkvalue(arg) for arg in args ]
-		kw = {}
-		for k, v in kwargs.items():
-			kw[k] = A2MXStream.checkvalue(v)
-		request[fn] = (a, kw)
-
-		fun = getattr(self, fn, False)
-		if not fun or not getattr(fun, 'A2MXRequest__marker__', False):
-			raise ValueError('Unknown request: {}'.format(fn))
-		if fun.A2MXRequest__signature_required__:
-			if 'next' in kw:
-				r = request.copy()
-				del r[fn][1]['next']
-			else:
-				r = request
-			sigdata = BSON.encode(r)
-			sig = self.node.ecc.sign(sigdata)
-			request[fn] = (a, kw, sig)
-		return request
 
 	def raw_send(self, data, wremove=False, direct=False):
 		if not self.__connected:
@@ -366,81 +279,4 @@ class A2MXStream():
 			print("last receive is longer than 90 seconds ago!")
 		print(datetime.datetime.now(), "keepalive")
 		self.raw_send(b'')
-
-	@A2MXRequest
-	def path(self, **kwargs):
-		if kwargs['lasthop'] == self.node.ecc.pubkey_c():
-			kwargs['lasthop'] = self.node.ecc
-		p = A2MXPath(**kwargs)
-
-		if not self.outgoing_path:
-			if p.lasthop.get_pubkey() == self.node.ecc.get_pubkey() and p.endnode.get_pubkey() == self.remote_ecc.get_pubkey():
-				self.outgoing_path = p
-				if p.deleted:
-					raise InvalidDataException('outgoing path is deleted?!')
-				if p.timestamp < datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=2):
-					raise InvalidDataException('outgoing path timestamp is older than 2 minutes!')
-
-				if self.remote_b58_pubkey_hash:
-					if self.remote_ecc.b58_pubkey_hash() != self.remote_b58_pubkey_hash:
-						raise InvalidDataException("remote public key hash doesn't match axuri given hash")
-				elif self.uri:
-					print("no axuri hash given, this is not recommended")
-
-				print("incoming" if self.uri == None else "outgoing", "connection up with", self.remote_ecc.b58_pubkey_hash())
-				if not self.node.add_stream(self):
-					print("add_stream == False")
-					self.shutdown()
-					return
-
-				try:
-					last_known_path = self.node.paths[-1]
-				except IndexError:
-					last_known_path = datetime.datetime.min
-				else:
-					last_known_path = last_known_path.newest_timestamp
-				r = self.request('pull', last_known_path)
-				self.send(r)
-				self.node.new_path(self.incoming_path)
-				self.keepalive()
-			else:
-				raise InvalidDataException("first path must be outgoing path")
-		p.stream = self
-		self.node.new_path(p)
-
-	@A2MXRequest_Signed
-	def pull(self, timestamp):
-		print("pull from", self.remote_ecc.b58_pubkey_hash(), timestamp)
-		for path in self.node.paths:
-			if path.newest_timestamp < timestamp:
-				continue
-			r = self.request('path', **path.data)
-			self.send(r)
-
-	@A2MXRequest_Signed
-	def decline(self):
-		raise NotImplemented()
-
-	@A2MXRequest
-	def flush(self, node, timestamp, signature):
-		# this command must be signed by the originating node and invalidates all paths
-		# the node is part of.
-		raise NotImplemented()
-
-	@A2MXRequest
-	def sendto(self, node, data):
-		self.node.sendto(node, data)
-
-	@A2MXRequest
-	def data(self, data):
-		print("got data command", data)
-
-	@A2MXRequest
-	def discard(self, *args, **kwargs):
-		pass
-
-	@A2MXRequest
-	def sleep(self, seconds):
-		print("sleep for {}".format(seconds))
-		return seconds
 

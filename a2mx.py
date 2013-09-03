@@ -15,6 +15,7 @@ from ecc import ECC
 
 from config import config
 from a2mxstream import A2MXStream
+from a2mxrequest import A2MXRequest
 import a2mxdirect
 
 class Unbuffered:
@@ -107,6 +108,8 @@ class A2MXNode():
 		for path in a2mxdirect.A2MXDirectPaths():
 			self.new_path(path)
 
+		self.request = A2MXRequest(self)
+
 		self.selectloop.tadd(random.randint(5, 15), self.find_new_peers)
 
 	def savepaths(self):
@@ -176,7 +179,7 @@ class A2MXNode():
 		for stream in self.streams:
 			if stream == path.stream:
 				continue
-			stream.send(stream.request('path', **path.data))
+			stream.send(stream.request.request('path', **path.data))
 
 	def del_path(self, path):
 		path.markdelete()
@@ -191,14 +194,19 @@ class A2MXNode():
 		nl.append(path)
 
 	def sendto(self, node, data):
-		if node not in self.nodes:
+		if node == self.ecc.pubkey_hash():
+			data = self.ecc.decrypt(bytes(data))
+			self.request(data)
+
+		if node not in self.connected_nodes:
 			try:
 				a2mxdirect.A2MXDirectStore(node, data)
 				print("stored data for {}".format(ECC.b58(node)))
 			except A2MXDirectException:
 				print("cannot send to node {}".format(ECC.b58(node)))
-			return
-		self.nodes[node].raw_send(data)
+			return False
+		self.connected_nodes[node].raw_send(data)
+		return True
 
 	def find_new_peers(self):
 		self.selectloop.tadd(random.randint(5, 15), self.find_new_peers)
