@@ -252,7 +252,8 @@ class A2MXStream():
 			return False
 		if isinstance(data, OrderedDict):
 			data = BSON.encode(data)
-		data = self.node.ecc.encrypt(bytes(data), self.remote_ecc.get_pubkey())
+		#data = self.node.ecc.encrypt(bytes(data), self.remote_ecc.get_pubkey())
+		data = self.remote_ecc.encrypt(data)
 		return self.raw_send(data)
 
 	def shutdown(self):

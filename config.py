@@ -1,6 +1,7 @@
 config = {
 	'cert.pem': '.a2mx/cert.pem',
 	'key.pem': '.a2mx/key.pem',
+	'pkcs8.der': '.a2mx/pkcs8.der',
 	'paths.db': '.a2mx/paths.db',
 	'bind': [ ('', 2594) ],
 	'publish_axuri': None,
