@@ -136,22 +136,7 @@ class A2MXDirect():
 			return { 'auth': self.auth, 'pubkey': self.node.ecc.pubkey_c() }
 		if isinstance(self.auth, datetime.datetime):
 			sigdata = BSON.encode({ 'auth': self.auth })
-			# OpenSSL uses ASN.1 encoded signature, try to ASN.1 decode it, if it fails assume signature is in raw format and encode it
-			try:
-				decoder.decode(bs['sig'])
-			except PyAsn1Error:
-				print("TRY TO CONVERT SIGNATURE, NON VERIFIED CODE!")
-				l = len(bs['sig'])
-				assert l % 2 == 0
-				l = int(l / 2)
-				rb = bs['sig'][:l]
-				sb = bs['sig'][l:]
-				r = int.from_bytes(rb, byteorder='big')
-				s = int.from_bytes(sb, byteorder='big')
-				rsig = encoder.encode(univ.Sequence().setComponentByPosition(0, univ.Integer(r)).setComponentByPosition(1, univ.Integer(s)))
-			else:
-				rsig = bs['sig']
-			verify = self.ecc.verify(rsig, sigdata)
+			verify = self.ecc.verify(bs['sig'], sigdata)
 			lsig = self.node.ecc.sign(sigdata)
 			if not verify:
 				return { 'error': 'Not authenticated' }

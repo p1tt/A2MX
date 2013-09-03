@@ -99,9 +99,9 @@ class A2MXPath():
 		self.deleted = now()
 		self.__sigod['deleted'] = self.deleted
 		sigdata = BSON.encode(self.__sigod)
-		if self.lasthop.privkey:
+		if self.lasthop.havePrivkey():
 			self.delete_signature = self.lasthop.sign(sigdata)
-		elif self.endnode.privkey:
+		elif self.endnode.havePrivkey():
 			self.delete_signature = self.endnode.sign(sigdata)
 		else:
 			raise ValueError('Cannot mark path as deleted without private key.')

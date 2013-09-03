@@ -6,6 +6,7 @@ cdef extern from "crypto.h":
 		Crypto(string keyfilepath, string password, int mode) except +
 		Crypto(string pubkey) except +
 
+		bint havePrivkey()
 		string pubkeyHash()
 		string pubkeyHashBase58()
 		string pubkeyCompressed()
@@ -41,6 +42,8 @@ cdef class A2MXcrypto:
 	def __dealloc__(self):
 		del self.thisptr
 
+	def havePrivkey(self):
+		return self.thisptr.havePrivkey()
 	def pubkeyHash(self):
 		return self.thisptr.pubkeyHash()
 	def pubkeyHashBase58(self):

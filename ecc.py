@@ -22,6 +22,9 @@ class ECC():
 	def b58_pubkey_hash(self):
 		return self.crypto.pubkeyHashBase58().decode('ascii')
 
+	def havePrivkey(self):
+		return self.crypto.havePrivkey()
+
 	def sign(self, message):
 		message = bytes(message)
 		return self.crypto.sign(message)

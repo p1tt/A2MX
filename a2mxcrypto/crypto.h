@@ -16,6 +16,10 @@ class Crypto {
 		std::string pubkeyHash();
 		std::string pubkeyHashBase58();
 
+		bool havePrivkey() {
+			return m_a2mxcrypto != 0;
+		}
+
 		std::string sign(std::string message);
 		bool verify(std::string message, std::string signature);
 
