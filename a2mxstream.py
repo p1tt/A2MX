@@ -23,7 +23,7 @@ def SSL(sock, server=False):
 	context.options = ssl.OP_SINGLE_DH_USE | ssl.OP_SINGLE_ECDH_USE
 	context.set_ciphers('ECDHE-ECDSA-AES256-SHA')
 	if server:
-		context.load_cert_chain(config['cert.pem'], config['key.pem'])
+		context.load_cert_chain(config['tls.cert.pem'], config['tls.key.pem'])
 	return context.wrap_socket(sock, server_side=server, do_handshake_on_connect=False)
 
 class A2MXStream():
@@ -57,8 +57,7 @@ class A2MXStream():
 		self.__connected = False
 		self.__last_recv = None
 		self.__pub_sent = False
-		self.incoming_path = None
-		self.outgoing_path = None
+		self.path = None
 		self._data = None
 		self.__select_r_fun = None
 		self.__select_w_fun = None
@@ -67,7 +66,7 @@ class A2MXStream():
 	def __str__(self):
 		return '{} Remote: {} Path: {} In: {}B Out: {}B{}'.format(
 			'Incoming' if self.uri == None else 'Outgoing', self.remote_ecc.b58_pubkey_hash(),
-			self.outgoing_path, self.bytes_in, self.bytes_out,
+			self.path, self.bytes_in, self.bytes_out,
 			' disconnected' if not self.__connected else '')
 
 	def connect(self):
@@ -174,7 +173,7 @@ class A2MXStream():
 		do_handshake()
 
 	def __send_pub(self):
-		self.send(self.node.ecc.pubkey_c())
+		self.send(self.node.ecc.pubkeyCompressed())
 		self.__pub_sent = True
 
 	def getlength(self, length):
@@ -193,13 +192,15 @@ class A2MXStream():
 			raise InvalidDataException('Unknown ident')
 
 	def getdata(self, length):
+		self.handler = (3, self.getlength)
 		assert len(self._data) >= length
 		data = self._data[:length]
 		del self._data[:length]
 
-		ecc = self.node.ecc
 		if self.__pub_sent:		# if we sent our public key then all data we receive has to be encrypted
-			data = ecc.decrypt(bytes(data))
+			data = self.node.ecc.decrypt(data)
+			if len(data) == 0:
+				return
 
 		if self.remote_ecc == None:	# first data we expect is the compressed remote public key
 			self.remote_ecc = ECC(pubkey_compressed=data)
@@ -207,15 +208,14 @@ class A2MXStream():
 			# ok we have the remote public key, from now on we send everything encrypted
 			self.send = self.encrypted_send
 
+			self.path = A2MXPath(self.node.ecc, self.remote_ecc)
 			if not self.__pub_sent:	# send our public key if we haven't already
 				self.__send_pub()
 
-			p = A2MXPath(ecc, self.remote_ecc, axuri=config['publish_axuri'])
-			self.incoming_path = p
-			self.send(self.request.request('path', **p.data))
+				self.send(self.request.request('path', **self.path.data))
+				print("DIRECT SEND PATH", self.path)
 		else:
 			self.request.parseRequest(data)
-		self.handler = (3, self.getlength)
 
 	def getdirectdata(self, length):
 		assert len(self._data) >= length

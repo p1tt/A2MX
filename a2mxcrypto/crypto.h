@@ -8,7 +8,7 @@ class Crypto {
 		static const unsigned int ENCRYPTED_KEYFILE = 1;
 		static const unsigned int DER_KEYFILE = 2;
 
-		Crypto(std::string keyfilepath, std::string password, unsigned int mode = 1);
+		Crypto(std::string a, std::string b, unsigned int mode = 1);
 		Crypto(std::string pubkey);
 		~Crypto();
 
@@ -16,7 +16,7 @@ class Crypto {
 		std::string pubkeyHash();
 		std::string pubkeyHashBase58();
 
-		bool havePrivkey() {
+		bool hasPrivkey() {
 			return m_a2mxcrypto != 0;
 		}
 

@@ -97,7 +97,7 @@ class A2MXNode():
 		self.connected_nodes = {}
 		self.axuris = {}
 
-		self.ecc = ECC(pkcs8_der_keyfile=config['pkcs8.der'])
+		self.ecc = ECC(pkcs8_der_keyfile_sign=config['sign.pkcs8.der'], pkcs8_der_keyfile_encrypt=config['encrypt.pkcs8.der'])
 
 		mypub = self.ecc.b58_pubkey_hash()
 		if sys.stdout.isatty():
@@ -126,36 +126,31 @@ class A2MXNode():
 		self.selectloop.wremove(selectable)
 
 	def add_stream(self, stream):
-		if stream.remote_ecc.pubkey_hash() in self.connected_nodes:
+		if stream.remote_ecc.pubkeyHash() in self.connected_nodes:
 			return False
 		assert stream not in self.streams
 		self.streams.append(stream)
-		self.connected_nodes[stream.remote_ecc.pubkey_hash()] = stream
-
+		self.connected_nodes[stream.remote_ecc.pubkeyHash()] = stream
 		return True
 
 	def del_stream(self, stream):
 		if stream not in self.streams:
 			return
 		self.streams.remove(stream)
-		assert stream.remote_ecc.pubkey_hash() in self.connected_nodes and self.connected_nodes[stream.remote_ecc.pubkey_hash()] == stream
-		del self.connected_nodes[stream.remote_ecc.pubkey_hash()]
+		assert stream.remote_ecc.pubkeyHash() in self.connected_nodes and self.connected_nodes[stream.remote_ecc.pubkeyHash()] == stream
+		del self.connected_nodes[stream.remote_ecc.pubkeyHash()]
 
-		if stream.incoming_path:
-			self.del_path(stream.incoming_path)
-		if stream.outgoing_path:
-			self.del_path(stream.outgoing_path)
-		else:
-			print("NO OUTGOING?! :-(")
+		if stream.path.isComplete:
+			self.del_path(stream.path)
 
-	def new_path(self, path):
+	def new_path(self, path, stream=None):
 		if path in self.paths:
 			oldindex = self.paths.index(path)
 			oldpath = self.paths[oldindex]
 			if path is oldpath:
 				del self.paths[oldindex]
 			elif path.equal(oldpath):
-				print("ignoring known path from {}\n ".format(path.stream.remote_ecc.b58_pubkey_hash() if path.stream else 'myself'), path)
+				print("ignoring known path from {}\n ".format(stream.remote_ecc.pubkeyHashBase58() if stream else 'myself'), path)
 				return
 			elif path.is_better_than(oldpath):
 				print("updating path\n  old:", oldpath, "\n  new:", path)
@@ -170,28 +165,34 @@ class A2MXNode():
 		try:
 			lastpath = self.paths[-2]
 		except IndexError:
-			return
-		if path.newest_timestamp < lastpath.newest_timestamp:
-			self.paths.sort(key=attrgetter('newest_timestamp'))
+			pass
+		else:
+			if path.newest_timestamp < lastpath.newest_timestamp:
+				self.paths.sort(key=attrgetter('newest_timestamp'))
 
 		self.update_nodes(path)
 
-		for stream in self.streams:
-			if stream == path.stream:
-				continue
+		if stream and self.ecc.pubkeyHash() in path.hashes:
 			stream.send(stream.request.request('path', **path.data))
+		for ostream in self.streams:
+			if ostream == stream:
+				continue
+			ostream.send(ostream.request.request('path', **path.data))
 
 	def del_path(self, path):
 		path.markdelete()
 		self.new_path(path)
 
 	def update_nodes(self, path):
-		if path.endpub not in self.nodes:
-			self.nodes[path.endpub] = []
-		nl = self.nodes[path.endpub]
-		if path in nl:
-			nl.remove(path)
-		nl.append(path)
+		def up(h):
+			if h not in self.nodes:
+				self.nodes[h] = []
+			nl = self.nodes[h]
+			if path in nl:
+				nl.remove(path)
+			nl.append(path)
+		up(path.AHash)
+		up(path.BHash)
 
 	def sendto(self, node, data):
 		if node == self.ecc.pubkey_hash():

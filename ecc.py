@@ -3,9 +3,9 @@ from a2mxcrypto import A2MXcrypto
 b58chars = b'123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
 class ECC():
-	def __init__(self, pkcs8_der_keyfile=None, pubkey_compressed=None):
-		if pkcs8_der_keyfile:
-			self.crypto = A2MXcrypto(keyfilepath=pkcs8_der_keyfile.encode('UTF-8'))
+	def __init__(self, pkcs8_der_keyfile_sign=None, pkcs8_der_keyfile_encrypt=None, pubkey_compressed=None):
+		if pkcs8_der_keyfile_sign and pkcs8_der_keyfile_encrypt:
+			self.crypto = A2MXcrypto(der_keyfile_sign=pkcs8_der_keyfile_sign.encode('UTF-8'), der_keyfile_encrypt=pkcs8_der_keyfile_encrypt.encode('UTF-8'))
 		elif pubkey_compressed:
 			pubkey_compressed = bytes(pubkey_compressed)
 			self.crypto = A2MXcrypto(pubkey=pubkey_compressed)
@@ -14,8 +14,12 @@ class ECC():
 
 	def pubkey_c(self):
 		return self.crypto.pubkeyCompressed()
+	def pubkeyCompressed(self):
+		return self.crypto.pubkeyCompressed()
 
 	def pubkey_hash(self):
+		return self.crypto.pubkeyHash()
+	def pubkeyHash(self):
 		return self.crypto.pubkeyHash()
 
 	def get_pubkey(self):
@@ -23,9 +27,11 @@ class ECC():
 
 	def b58_pubkey_hash(self):
 		return self.crypto.pubkeyHashBase58().decode('ascii')
+	def pubkeyHashBase58(self):
+		return self.crypto.pubkeyHashBase58().decode('ascii')
 
-	def havePrivkey(self):
-		return self.crypto.havePrivkey()
+	def hasPrivkey(self):
+		return self.crypto.hasPrivkey()
 
 	def sign(self, message):
 		message = bytes(message)

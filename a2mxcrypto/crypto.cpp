@@ -7,21 +7,28 @@ static std::string sb2str(SecByteBlock data) {
 	return std::string((char*)data.data(), data.size());
 }
 
-Crypto::Crypto(std::string keyfilepath, std::string password, unsigned int mode) {
+Crypto::Crypto(std::string a, std::string b, unsigned int mode) {
 	switch (mode) {
 		case DER_KEYFILE:
-			m_a2mxcrypto = new A2MXcrypto(keyfilepath);
+			// a = keyfile_sign
+			// b = keyfile_encrypt
+			m_a2mxcrypto = new A2MXcrypto(a, b);
 			break;
 		case ENCRYPTED_KEYFILE:
-			m_a2mxcrypto = new A2MXcrypto(keyfilepath, str2sb(password));
+			// a = keyfile
+			// b = password
+			m_a2mxcrypto = new A2MXcrypto(a, str2sb(b));
 			break;
 		case PASSWORD_ONLY:
-			m_a2mxcrypto = new A2MXcrypto(str2sb(password));
+			// b = password
+			m_a2mxcrypto = new A2MXcrypto(str2sb(b));
 			break;
 		default:
 			throw A2MXcrypto::Error("Invalid mode");
 	}
-	m_a2mxpeer = new A2MXpeer(m_a2mxcrypto->pubkey());
+	m_a2mxpeer = new A2MXpeer(m_a2mxcrypto->pubkeyCompressed());
+	if (m_a2mxcrypto->pubkeyHash() != m_a2mxpeer->pubkeyHash())
+		throw A2MXcrypto::Error("Fucked up...");
 }
 
 Crypto::Crypto(std::string pubkey) {

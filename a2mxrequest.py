@@ -66,7 +66,7 @@ class A2MXRequest():
 
 		def exfn(fn, args, kwargs, signature):
 			if self.stream:
-				if not self.stream.outgoing_path and fn != 'path':
+				if not self.stream.path.isComplete and fn != 'path':
 					raise InvalidDataException('expecting path first')
 			f = getattr(self, fn, None)
 			if getattr(f, 'A2MXRequest__marker__', False) == True:
@@ -113,45 +113,30 @@ class A2MXRequest():
 
 	@A2MXRequest
 	def path(self, **kwargs):
-		if kwargs['lasthop'] == self.node.ecc.pubkey_c():
-			kwargs['lasthop'] = self.node.ecc
+		if kwargs['A'] == self.node.ecc.pubkeyCompressed():
+			kwargs['A'] = self.node.ecc
+		elif kwargs['B'] == self.node.ecc.pubkeyCompressed():
+			kwargs['B'] = self.node.ecc
 		p = A2MXPath(**kwargs)
+		assert p.isComplete
+		self.node.new_path(p, self.stream)
+		if self.stream and self.stream.path == p and not self.stream.path.isComplete:
+			self.stream.path = p
+			print("incoming" if self.stream.uri == None else "outgoing", "connection up with", self.stream.remote_ecc.b58_pubkey_hash())
+			if not self.node.add_stream(self.stream):
+				print("add_stream == False")
+				self.stream.shutdown()
+				return
 
-		if self.stream and not self.stream.outgoing_path:
-			if p.lasthop.get_pubkey() == self.node.ecc.get_pubkey() and p.endnode.get_pubkey() == self.stream.remote_ecc.get_pubkey():
-				if p.deleted:
-					raise InvalidDataException('outgoing path is deleted?!')
-				if p.timestamp < datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=2):
-					raise InvalidDataException('outgoing path timestamp is older than 2 minutes!')
-
-				if self.stream.remote_b58_pubkey_hash:
-					if self.stream.remote_ecc.b58_pubkey_hash() != self.stream.remote_b58_pubkey_hash:
-						raise InvalidDataException("remote public key hash doesn't match axuri given hash")
-				elif self.stream.uri:
-					print("no axuri hash given, this is not recommended")
-
-				self.stream.outgoing_path = p
-
-				print("incoming" if self.stream.uri == None else "outgoing", "connection up with", self.stream.remote_ecc.b58_pubkey_hash())
-				if not self.node.add_stream(self.stream):
-					print("add_stream == False")
-					self.stream.shutdown()
-					return
-
-				try:
-					last_known_path = self.node.paths[-1]
-				except IndexError:
-					last_known_path = datetime.datetime.min
-				else:
-					last_known_path = last_known_path.newest_timestamp
-				r = self.request('pull', last_known_path)
-				self.stream.send(r)
-				self.node.new_path(self.stream.incoming_path)
-				self.stream.keepalive()
+			try:
+				last_known_path = self.node.paths[-1]
+			except IndexError:
+				last_known_path = datetime.datetime.min
 			else:
-				raise InvalidDataException("first path must be outgoing path")
-		p.stream = self.stream
-		self.node.new_path(p)
+				last_known_path = last_known_path.newest_timestamp
+			r = self.request('pull', last_known_path)
+			self.stream.send(r)
+			self.stream.keepalive()
 
 	@A2MXRequest_Signed
 	def pull(self, timestamp):

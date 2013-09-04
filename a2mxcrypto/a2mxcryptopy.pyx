@@ -3,10 +3,10 @@ from libcpp.string cimport string
 
 cdef extern from "crypto.h":
 	cdef cppclass Crypto:
-		Crypto(string keyfilepath, string password, int mode) except +
+		Crypto(string a, string b, int mode) except +
 		Crypto(string pubkey) except +
 
-		bint havePrivkey()
+		bint hasPrivkey()
 		string pubkeyHash()
 		string pubkeyHashBase58()
 		string pubkeyCompressed()
@@ -20,30 +20,35 @@ cdef extern from "crypto.h":
 cdef class A2MXcrypto:
 	cdef Crypto *thisptr
 
-	def __cinit__(self, bytes keyfilepath=None, bytes password=None, bytes pubkey=None):
+	def __cinit__(self, bytes keyfilepath=None, bytes password=None, bytes pubkey=None, bytes der_keyfile_sign=None, bytes der_keyfile_encrypt=None):
 		cdef int mode
-		if keyfilepath == None and password != None:
+		cdef bytes a
+		cdef bytes b
+
+		if keyfilepath == None and password != None and pubkey == None and der_keyfile_sign == None and der_keyfile_encrypt == None:
 			mode = 0
-		elif keyfilepath != None and password != None:
+			a = b''
+			b = password
+		elif keyfilepath != None and password != None and pubkey == None and der_keyfile_sign == None and der_keyfile_encrypt == None:
 			mode = 1
-		elif keyfilepath != None and password == None:
+			a = keyfilepath
+			b = password
+		elif keyfilepath == None and password == None and pubkey == None and der_keyfile_sign != None and der_keyfile_encrypt != None:
 			mode = 2
-		elif pubkey != None:
+			a = der_keyfile_sign
+			b = der_keyfile_encrypt
+		elif keyfilepath == None and password == None and pubkey != None and der_keyfile_sign == None and der_keyfile_encrypt == None:
 			self.thisptr = new Crypto(pubkey)
 			return
 		else:
 			raise Exception("Invalid arguments")
-		if password == None:
-			password = b''
-		if keyfilepath == None:
-			keyfilepath = b''
-		self.thisptr = new Crypto(keyfilepath, password, mode)
+		self.thisptr = new Crypto(a, b, mode)
 
 	def __dealloc__(self):
 		del self.thisptr
 
-	def havePrivkey(self):
-		return self.thisptr.havePrivkey()
+	def hasPrivkey(self):
+		return self.thisptr.hasPrivkey()
 	def pubkeyHash(self):
 		return self.thisptr.pubkeyHash()
 	def pubkeyHashBase58(self):
