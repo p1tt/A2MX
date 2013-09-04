@@ -2,6 +2,7 @@ import datetime
 from collections import OrderedDict
 from bson import BSON
 
+from a2mxcommon import InvalidDataException
 from a2mxpath import A2MXPath
 
 def A2MXRequest(fn):
@@ -73,7 +74,10 @@ class A2MXRequest():
 				if f.A2MXRequest__signature_required__:
 					sigok = signature and self.stream.remote_ecc.verify(signature, BSON.encode({ fn: (args, kwargs) }))
 				if not f.A2MXRequest__signature_required__ or sigok:
-					waitseconds = f(*args, **kwargs)
+					if args != None:
+						waitseconds = f(*args, **kwargs)
+					else:
+						waitseconds = f(**kwargs)
 					if waitseconds:
 						yield waitseconds
 					if not nextrequest:
@@ -83,7 +87,11 @@ class A2MXRequest():
 			print("Invalid request {}({}, {}) {}".format(fn, args, kwargs, 'unsigned' if not signature else 'signed' if sigok else 'invalid signed'))
 	
 		for fn, argtuple in request:
-			if len(argtuple) == 2:
+			if len(argtuple) == 1:
+				args = None
+				kwargs = argtuple[0]
+				sig = None
+			elif len(argtuple) == 2:
 				args, kwargs = argtuple
 				sig = None
 			elif len(argtuple) == 3:
@@ -169,8 +177,8 @@ class A2MXRequest():
 		self.node.sendto(node, data)
 
 	@A2MXRequest
-	def data(self, data):
-		print("got data command", data)
+	def data(self, **kwargs):
+		print("got data command", kwargs)
 
 	@A2MXRequest
 	def discard(self, *args, **kwargs):

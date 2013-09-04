@@ -1,5 +1,7 @@
 from a2mxcrypto import A2MXcrypto
 
+b58chars = b'123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+
 class ECC():
 	def __init__(self, pkcs8_der_keyfile=None, pubkey_compressed=None):
 		if pkcs8_der_keyfile:
@@ -40,3 +42,24 @@ class ECC():
 		message = bytes(message)
 		return self.crypto.decrypt(message)
 
+
+	@staticmethod
+	def b58(value):
+		inputnum = int.from_bytes(value, byteorder='big')
+		b58part = b''
+		while inputnum > 0:
+			idx = inputnum % 58
+			b58part = b58chars[idx:idx + 1] + b58part
+			inputnum //= 58
+		return b58part.decode('ascii')
+
+	@staticmethod
+	def b58decode(b58string):
+		outputnum = 0
+		for char in b58string:
+			outputnum *= 58
+			outputnum += b58chars.index(char)
+		length = outputnum.bit_length() // 8
+		if outputnum.bit_length() % 8 != 0:
+			length += 1
+		return outputnum.to_bytes(length, byteorder='big')

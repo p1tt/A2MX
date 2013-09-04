@@ -126,11 +126,11 @@ class A2MXNode():
 		self.selectloop.wremove(selectable)
 
 	def add_stream(self, stream):
-		if stream.remote_ecc.pubkey_c() in self.connected_nodes:
+		if stream.remote_ecc.pubkey_hash() in self.connected_nodes:
 			return False
 		assert stream not in self.streams
 		self.streams.append(stream)
-		self.connected_nodes[stream.remote_ecc.pubkey_c()] = stream
+		self.connected_nodes[stream.remote_ecc.pubkey_hash()] = stream
 
 		return True
 
@@ -138,8 +138,8 @@ class A2MXNode():
 		if stream not in self.streams:
 			return
 		self.streams.remove(stream)
-		assert stream.remote_ecc.pubkey_c() in self.connected_nodes and self.connected_nodes[stream.remote_ecc.pubkey_c()] == stream
-		del self.connected_nodes[stream.remote_ecc.pubkey_c()]
+		assert stream.remote_ecc.pubkey_hash() in self.connected_nodes and self.connected_nodes[stream.remote_ecc.pubkey_hash()] == stream
+		del self.connected_nodes[stream.remote_ecc.pubkey_hash()]
 
 		if stream.incoming_path:
 			self.del_path(stream.incoming_path)
@@ -196,13 +196,14 @@ class A2MXNode():
 	def sendto(self, node, data):
 		if node == self.ecc.pubkey_hash():
 			data = self.ecc.decrypt(bytes(data))
-			self.request(data)
+			self.request.parseRequest(data)
+			return
 
 		if node not in self.connected_nodes:
 			try:
 				a2mxdirect.A2MXDirectStore(node, data)
 				print("stored data for {}".format(ECC.b58(node)))
-			except A2MXDirectException:
+			except a2mxdirect.A2MXDirectException:
 				print("cannot send to node {}".format(ECC.b58(node)))
 			return False
 		self.connected_nodes[node].raw_send(data)
