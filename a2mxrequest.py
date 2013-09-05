@@ -136,7 +136,6 @@ class A2MXRequest():
 				last_known_path = last_known_path.newest_timestamp
 			r = self.request('pull', last_known_path)
 			self.stream.send(r)
-			self.stream.keepalive()
 
 	@A2MXRequest_Signed
 	def pull(self, timestamp):

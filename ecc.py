@@ -62,7 +62,7 @@ class ECC():
 	@staticmethod
 	def b58decode(b58string):
 		outputnum = 0
-		for char in b58string:
+		for char in b58string.encode('ascii'):
 			outputnum *= 58
 			outputnum += b58chars.index(char)
 		length = outputnum.bit_length() // 8

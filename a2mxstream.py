@@ -36,7 +36,7 @@ class A2MXStream():
 		self.bytes_in = 0
 		self.bytes_out = 0
 		self.cleanstate()
-		self.remote_b58_pubkey_hash = pubkey_hash
+		self.remote_pubkey_hash = pubkey_hash
 		self.request = A2MXRequest(self.node, self)
 
 		if sock:
@@ -62,6 +62,8 @@ class A2MXStream():
 		self.__select_r_fun = None
 		self.__select_w_fun = None
 		self.__direct = False
+		self.__send_queue = []
+		self.__recv_queue = {}
 
 	def __str__(self):
 		return '{} Remote: {} Path: {} In: {}B Out: {}B{}'.format(
@@ -83,10 +85,11 @@ class A2MXStream():
 		else:
 			assert False
 		if '@' in host:
-			self.remote_b58_pubkey_hash, host = host.split('@')
+			b58_pubkey_hash, host = host.split('@')
+			self.remote_pubkey_hash = ECC.b58decode(b58_pubkey_hash)
 
 		print("connect to", self.uri)
-		if self.remote_b58_pubkey_hash == None:
+		if self.remote_pubkey_hash == None:
 			print("No remote public key hash given. This is NOT recommended.")
 
 		self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -164,7 +167,7 @@ class A2MXStream():
 
 			self.__connected = True
 			self._data = bytearray()
-			self.handler = (3, self.getlength)
+			self.handler = (7, self.getLength)
 			if self.uri:
 				self.__send_pub()
 
@@ -178,27 +181,47 @@ class A2MXStream():
 		self.send(self.node.ecc.pubkeyCompressed())
 		self.__pub_sent = True
 
-	def getlength(self, length):
-		assert len(self._data) >= 3
-		ident, length = struct.unpack_from('>BH', self._data[:3])
-		del self._data[:3]
+	def getLength(self, length):
+		assert len(self._data) >= 7
+		ident, rid, length = struct.unpack_from('>BLH', self._data[:7])
+		del self._data[:7]
 		if length == 0:
 			return
+
+		def getRemainingData(length):
+			self.handler = (7, self.getLength)
+			data = self._data[:length]
+			del self._data[:length]
+			if rid not in self.__recv_queue:
+				self.__recv_queue[rid] = data
+			else:
+				self.__recv_queue[rid] += data
+		def getData(length):
+			self.handler = (7, self.getLength)
+			data = self._data[:length]
+			del self._data[:length]
+			if rid in self.__recv_queue:
+				data = self.__recv_queue[rid] + data
+				del self.__recv_queue[rid]
+			if ident == 0:
+				if self.__direct != False:
+					raise InvalidDataException('Cannot mix requests on one stream')
+				self.gotData(data)
+			elif ident == 1:
+				self.gotDirectData(data)
+			else:
+				raise InvalidDataException('Unknown ident')
+
 		if ident == 0:
-			if self.__direct != False:
-				raise InvalidDataException('Cannot mix requests on one stream')
-			self.handler = (length, self.getdata)
+			self.handler = (length, getData)
 		elif ident == 1:
-			self.handler = (length, self.getdirectdata)
+			self.handler = (length, getData)
+		elif ident == 2:
+			self.handler = (length, getRemainingData)
 		else:
 			raise InvalidDataException('Unknown ident')
 
-	def getdata(self, length):
-		self.handler = (3, self.getlength)
-		assert len(self._data) >= length
-		data = self._data[:length]
-		del self._data[:length]
-
+	def gotData(self, data):
 		if self.__pub_sent:		# if we sent our public key then all data we receive has to be encrypted
 			data = self.node.ecc.decrypt(data)
 			if len(data) == 0:
@@ -207,11 +230,11 @@ class A2MXStream():
 		if self.remote_ecc == None:	# first data we expect is the compressed remote public key
 			self.remote_ecc = ECC(pubkey_compressed=data)
 
-			if self.remote_b58_pubkey_hash != None:
-				if self.remote_ecc.pubkeyHashBase58() != self.remote_b58_pubkey_hash:
+			if self.remote_pubkey_hash != None:
+				if self.remote_ecc.pubkeyHash() != self.remote_pubkey_hash:
 					raise ValueError("Remote public key hash doesn't match.")
 			else:
-				self.remote_b58_pubkey_hash = self.remote_ecc.pubkeyHashBase58()
+				self.remote_pubkey_hash = self.remote_ecc.pubkeyHash()
 
 			# ok we have the remote public key, from now on we send everything encrypted
 			self.send = self.encrypted_send
@@ -223,35 +246,50 @@ class A2MXStream():
 		else:
 			self.request.parseRequest(data)
 
-	def getdirectdata(self, length):
-		assert len(self._data) >= length
-		data = self._data[:length]
-		del self._data[:length]
-
+	def gotDirectData(self, data):
 		if self.__direct == False:
 			def send(data):
 				return self.raw_send(data, direct=True)
 			self.__direct = A2MXDirect(self.node, send)
 		self.__direct.process(data)
-		self.handler = (4, self.getlength)
+		self.handler = (7, self.getLength)
 
-	def raw_send(self, data, wremove=False, direct=False):
+	def raw_send(self, data, direct=False):
 		if not self.__connected:
 			return
+		rid = random.randint(0, 0xFFFF)
+		# split data
+		while len(data) > 0:
+			part = data[:0xFFFF]
+			data = data[0xFFFF:]
+			data_remaining = len(data) > 0
+			first_byte = 2 if data_remaining else 1 if direct else 0
+
+			pre = struct.pack('>BLH', first_byte, rid, len(part))
+			self.__send_queue.append(pre + part)
+			data = data[0xFFFF:]
+		self.send_queue()
+
+	def send_queue(self, data=None):
+		if data == None:
+			data = self.__send_queue.pop(0)
 		try:
-			self.sock.sendall(struct.pack('>BH', 1 if direct else 0, len(data)) + data)
+			self.sock.sendall(data)
 		except ssl.SSLWantWriteError:
 			print('SSLWantWriteError raised, this codepath is heavily untested.')
-			self.__select_w_fun = (self.raw_send, [data], { 'wremove': True })
-			if not wremove:
-				self.node.wadd(self)
+			self.__select_w_fun = (self.send_queue, (), { 'data': data })
+			self.node.wadd(self)
+			return
 		except (ConnectionResetError, BrokenPipeError, ConnectionRefusedError):
 			self.connectionfailure()
 		else:
-			self.bytes_out += len(data) + 4
-			if wremove:
-				self.node.wremove(self)
-				self.__select_w_fun = None
+			self.bytes_out += len(data) + 3
+		if len(self.__send_queue):
+			self.__select_w_fun = (self.send_queue, (), {})
+			self.node.wadd(self)
+		else:
+			self.__select_w_fun = None
+			self.node.wremove(self)
 
 	def encrypted_send(self, data):
 		if not self.__connected:
@@ -276,13 +314,4 @@ class A2MXStream():
 		if self.__direct == False:
 			print(self.remote_ecc.b58_pubkey_hash() if self.remote_ecc else self.uri, "connection failure")
 		self.shutdown()
-
-	def keepalive(self):
-		if not self.__connected:
-			return
-		self.node.selectloop.tadd(random.randint(20, 45), self.keepalive)
-		if self.__last_recv < datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=90):
-			print("last receive is longer than 90 seconds ago!")
-		print(datetime.datetime.now(), "keepalive")
-		self.raw_send(b'')
 

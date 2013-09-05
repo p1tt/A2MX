@@ -237,7 +237,7 @@ class A2MXNode():
 			axuri = random.choice(axuris)
 		except IndexError:
 			return
-		A2MXStream(self, uri='ax://' + axuri[0], pubkey_hash=ECC.b58(axuri[1]))
+		A2MXStream(self, uri='ax://' + axuri[0], pubkey_hash=axuri[1])
 
 	def find_routes_from(self, src, dst, maxhops=None):
 		if dst not in self.nodes:
