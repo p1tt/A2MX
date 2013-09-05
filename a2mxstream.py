@@ -259,10 +259,23 @@ class A2MXStream():
 			self.__access = A2MXAccess(self.node, send)
 		self.__access.process(data)
 
+	def gotDirectData(self, data):
+		request = A2MXRequest.parse(bytes(data))
+		# currently only pull is supported hardcoded ... FIXME
+		timestamp = request['pull'][0][0]
+		print("got pull from", self.remote_ecc.pubkeyHashBase58(), timestamp)
+		for path in self.node.paths:
+			if path.newest_timestamp < timestamp:
+				continue
+			r = self.request.request('path', **path.data)
+			self.send(r)
+
 	def raw_send(self, data, access=False, direct=False):
 		assert not (access and direct)
 		if not self.__connected:
 			return
+		if isinstance(data, OrderedDict):
+			data = BSON.encode(data)
 		rid = random.randint(0, 0xFFFFFFFF)
 		# split data
 		while len(data) > 0:
@@ -297,13 +310,14 @@ class A2MXStream():
 			self.__select_w_fun = None
 			self.node.wremove(self)
 
-	def encrypted_send(self, data):
+	def encrypted_send(self, data, access=False, direct=False):
+		assert not (access and direct)
 		if not self.__connected:
 			return False
 		if isinstance(data, OrderedDict):
 			data = BSON.encode(data)
 		data = self.remote_ecc.encrypt(data)
-		return self.raw_send(data)
+		return self.raw_send(data, access, direct)
 
 	def shutdown(self):
 		try:

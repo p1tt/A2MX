@@ -10,11 +10,6 @@ def A2MXRequest(fn):
 	fn.A2MXRequest__signature_required__ = False
 	return fn
 
-def A2MXRequest_Signed(fn):
-	fn.A2MXRequest__marker__ = True
-	fn.A2MXRequest__signature_required__ = True
-	return fn
-
 class A2MXRequest():
 	def __init__(self, node, stream=None):
 		self.node = node
@@ -34,30 +29,18 @@ class A2MXRequest():
 		else:
 			raise ValueError('Invalid type in args {} = {}'.format(type(value), value))
 
-	def request(self, fn, *args, request=None, **kwargs):
+	@staticmethod
+	def request(fn, *args, request=None, **kwargs):
 		if request == None:
 			request = OrderedDict()
 		else:
 			assert isinstance(request, OrderedDict)
 
-		a = [ self.checkvalue(arg) for arg in args ]
+		a = [ A2MXRequest.checkvalue(arg) for arg in args ]
 		kw = {}
 		for k, v in kwargs.items():
-			kw[k] = self.checkvalue(v)
+			kw[k] = A2MXRequest.checkvalue(v)
 		request[fn] = (a, kw)
-
-		fun = getattr(self, fn, False)
-		if not fun or not getattr(fun, 'A2MXRequest__marker__', False):
-			raise ValueError('Unknown request: {}'.format(fn))
-		if fun.A2MXRequest__signature_required__:
-			if 'next' in kw:
-				r = request.copy()
-				del r[fn][1]['next']
-			else:
-				r = request
-			sigdata = BSON.encode(r)
-			sig = self.node.ecc.sign(sigdata)
-			request[fn] = (a, kw, sig)
 		return request
 
 	def parseRequest(self, request):
@@ -71,19 +54,16 @@ class A2MXRequest():
 			f = getattr(self, fn, None)
 			if getattr(f, 'A2MXRequest__marker__', False) == True:
 				nextrequest = kwargs.pop('next', None)
-				if f.A2MXRequest__signature_required__:
-					sigok = signature and self.stream.remote_ecc.verify(signature, BSON.encode({ fn: (args, kwargs) }))
-				if not f.A2MXRequest__signature_required__ or sigok:
-					if args != None:
-						waitseconds = f(*args, **kwargs)
-					else:
-						waitseconds = f(**kwargs)
-					if waitseconds:
-						yield waitseconds
-					if not nextrequest:
-						return
-					parseRequest(nextrequest.items())
+				if args != None:
+					waitseconds = f(*args, **kwargs)
+				else:
+					waitseconds = f(**kwargs)
+				if waitseconds:
+					yield waitseconds
+				if not nextrequest:
 					return
+				parseRequest(nextrequest.items())
+				return
 			print("Invalid request {}({}, {}) {}".format(fn, args, kwargs, 'unsigned' if not signature else 'signed' if sigok else 'invalid signed'))
 	
 		for fn, argtuple in request:
@@ -137,20 +117,7 @@ class A2MXRequest():
 			else:
 				last_known_path = last_known_path.newest_timestamp
 			r = self.request('pull', last_known_path)
-			self.stream.send(r)
-
-	@A2MXRequest_Signed
-	def pull(self, timestamp):
-		print("pull from", self.stream.remote_ecc.b58_pubkey_hash(), timestamp)
-		for path in self.node.paths:
-			if path.newest_timestamp < timestamp:
-				continue
-			r = self.request('path', **path.data)
-			self.stream.send(r)
-
-	@A2MXRequest_Signed
-	def decline(self):
-		raise NotImplemented()
+			self.stream.raw_send(r, direct=True)
 
 	@A2MXRequest
 	def flush(self, node, timestamp, signature):
