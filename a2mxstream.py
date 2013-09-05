@@ -86,6 +86,8 @@ class A2MXStream():
 			self.remote_b58_pubkey_hash, host = host.split('@')
 
 		print("connect to", self.uri)
+		if self.remote_b58_pubkey_hash == None:
+			print("No remote public key hash given. This is NOT recommended.")
 
 		self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.sock.setblocking(0)
@@ -205,15 +207,19 @@ class A2MXStream():
 		if self.remote_ecc == None:	# first data we expect is the compressed remote public key
 			self.remote_ecc = ECC(pubkey_compressed=data)
 
+			if self.remote_b58_pubkey_hash != None:
+				if self.remote_ecc.pubkeyHashBase58() != self.remote_b58_pubkey_hash:
+					raise ValueError("Remote public key hash doesn't match.")
+			else:
+				self.remote_b58_pubkey_hash = self.remote_ecc.pubkeyHashBase58()
+
 			# ok we have the remote public key, from now on we send everything encrypted
 			self.send = self.encrypted_send
 
 			self.path = A2MXPath(self.node.ecc, self.remote_ecc)
 			if not self.__pub_sent:	# send our public key if we haven't already
 				self.__send_pub()
-
 				self.send(self.request.request('path', **self.path.data))
-				print("DIRECT SEND PATH", self.path)
 		else:
 			self.request.parseRequest(data)
 

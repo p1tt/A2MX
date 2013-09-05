@@ -217,22 +217,27 @@ class A2MXNode():
 			return
 
 		axuris = []
+		myhash = self.ecc.pubkeyHash()
 
 		for path in self.paths:
-			if path.axuri != None and not path.deleted and path.endpub != self.ecc.pubkey_hash() and path.axuri not in axuris:
-				already_connected = False
-				for stream in self.streams:
-					if stream.remote_ecc.pubkey_hash() == path.endnode.pubkey_hash():
-						already_connected = True
-						break
-				if not already_connected:
-					axuris.append((path.axuri, path.endnode.b58_pubkey_hash()))
+			def check(uri, h):
+				if uri == None:
+					return
+				if h == myhash:
+					return
+				if uri in axuris:
+					return
+				if h in self.connected_nodes:
+					return
+				axuris.append((uri, h))
+			check(path.AURI, path.AHash)
+			check(path.BURI, path.BHash)
 
 		try:
 			axuri = random.choice(axuris)
 		except IndexError:
 			return
-		A2MXStream(self, uri=axuri[0], pubkey_hash=axuri[1])
+		A2MXStream(self, uri='ax://' + axuri[0], pubkey_hash=ECC.b58(axuri[1]))
 
 	def find_routes_from(self, src, dst, maxhops=None):
 		if dst not in self.nodes:

@@ -129,7 +129,7 @@ class A2MXRequest():
 				return
 
 			try:
-				last_known_path = self.node.paths[-1]
+				last_known_path = self.node.paths[-2]
 			except IndexError:
 				last_known_path = datetime.datetime.min
 			else:
