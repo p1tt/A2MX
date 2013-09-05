@@ -11,7 +11,7 @@ from config import config
 from ecc import ECC
 
 from a2mxpath import A2MXPath
-from a2mxdirect import A2MXDirect
+from a2mxaccess import A2MXAccess
 from a2mxcommon import InvalidDataException
 from a2mxrequest import A2MXRequest
 
@@ -61,7 +61,7 @@ class A2MXStream():
 		self._data = None
 		self.__select_r_fun = None
 		self.__select_w_fun = None
-		self.__direct = False
+		self.__access = False
 		self.__send_queue = []
 		self.__recv_queue = {}
 
@@ -183,40 +183,46 @@ class A2MXStream():
 
 	def getLength(self, length):
 		assert len(self._data) >= 7
+		assert length == 7
 		ident, rid, length = struct.unpack_from('>BLH', self._data[:7])
 		del self._data[:7]
 		if length == 0:
 			return
+		print("getLength", ident, rid, length)
 
 		def getRemainingData(length):
 			self.handler = (7, self.getLength)
 			data = self._data[:length]
 			del self._data[:length]
+
 			if rid not in self.__recv_queue:
 				self.__recv_queue[rid] = data
 			else:
 				self.__recv_queue[rid] += data
+
 		def getData(length):
+			print("getData", length)
 			self.handler = (7, self.getLength)
 			data = self._data[:length]
 			del self._data[:length]
+
 			if rid in self.__recv_queue:
 				data = self.__recv_queue[rid] + data
 				del self.__recv_queue[rid]
 			if ident == 0:
-				if self.__direct != False:
+				if self.__access != False:
 					raise InvalidDataException('Cannot mix requests on one stream')
 				self.gotData(data)
 			elif ident == 1:
 				self.gotDirectData(data)
+			elif ident == 2:
+				self.gotAccessData(data)
 			else:
 				raise InvalidDataException('Unknown ident')
 
-		if ident == 0:
+		if ident <= 3:
 			self.handler = (length, getData)
-		elif ident == 1:
-			self.handler = (length, getData)
-		elif ident == 2:
+		elif ident == 0xFF:
 			self.handler = (length, getRemainingData)
 		else:
 			raise InvalidDataException('Unknown ident')
@@ -246,24 +252,24 @@ class A2MXStream():
 		else:
 			self.request.parseRequest(data)
 
-	def gotDirectData(self, data):
-		if self.__direct == False:
+	def gotAccessData(self, data):
+		if self.__access == False:
 			def send(data):
-				return self.raw_send(data, direct=True)
-			self.__direct = A2MXDirect(self.node, send)
-		self.__direct.process(data)
-		self.handler = (7, self.getLength)
+				return self.raw_send(data, access=True)
+			self.__access = A2MXAccess(self.node, send)
+		self.__access.process(data)
 
-	def raw_send(self, data, direct=False):
+	def raw_send(self, data, access=False, direct=False):
+		assert not (access and direct)
 		if not self.__connected:
 			return
-		rid = random.randint(0, 0xFFFF)
+		rid = random.randint(0, 0xFFFFFFFF)
 		# split data
 		while len(data) > 0:
 			part = data[:0xFFFF]
 			data = data[0xFFFF:]
 			data_remaining = len(data) > 0
-			first_byte = 2 if data_remaining else 1 if direct else 0
+			first_byte = 0xFF if data_remaining else 1 if direct else 2 if access else 0
 
 			pre = struct.pack('>BLH', first_byte, rid, len(part))
 			self.__send_queue.append(pre + part)
@@ -283,7 +289,7 @@ class A2MXStream():
 		except (ConnectionResetError, BrokenPipeError, ConnectionRefusedError):
 			self.connectionfailure()
 		else:
-			self.bytes_out += len(data) + 3
+			self.bytes_out += len(data)
 		if len(self.__send_queue):
 			self.__select_w_fun = (self.send_queue, (), {})
 			self.node.wadd(self)
@@ -306,12 +312,12 @@ class A2MXStream():
 			pass
 		self.sock.close()
 		self.node.del_stream(self)
-		if self.__direct != False:
-			self.__direct.disconnected()
+		if self.__access != False:
+			self.__access.disconnected()
 		self.cleanstate()
 
 	def connectionfailure(self):
-		if self.__direct == False:
+		if self.__access == False:
 			print(self.remote_ecc.b58_pubkey_hash() if self.remote_ecc else self.uri, "connection failure")
 		self.shutdown()
 

@@ -11,14 +11,14 @@ def now():
 	return BSON.decode(BSON.encode({'t': datetime.datetime.now(datetime.timezone.utc)}), tz_aware=True)['t']
 
 class A2MXPath():
-	def __init__(self, A=None, B=None, T=None, UA=None, UB=None, SA=None, SB=None, D=None, DS=None):
+	def __init__(self, A=None, B=None, T=None, UA=None, UB=None, SA=None, SB=None, D=None, DS=None, no_URI=False):
 		# A = node A compressed public key
 		# B = node B compressed public key
 		# T = timestamp
 		# UA = AX URI node A
 		# UB = AX URI node B
-		# SA = node A signature (over A, B, T and UA)
-		# SB = node B signature (over A, B, T and UB)
+		# SA = node A signature (over A, B, T and UA if present)
+		# SB = node B signature (over A, B, T and UB if present)
 		# D = deleted timestamp
 		# DS = deleted signature (over A, B, T, SA, SB and D)
 		# A must always be the smaller binary value
@@ -27,14 +27,14 @@ class A2MXPath():
 			self.__a = ECC(pubkey_compressed=A)
 		else:
 			self.__a = A
-			if self.__a.hasPrivkey():
+			if not no_URI and self.__a.hasPrivkey():
 				UA = config['publish_axuri']
 
 		if not isinstance(B, ECC):
 			self.__b = ECC(pubkey_compressed=B)
 		else:
 			self.__b = B
-			if self.__b.hasPrivkey():
+			if not no_URI and self.__b.hasPrivkey():
 				UB = config['publish_axuri']
 
 		def testURI(uri):
@@ -75,13 +75,19 @@ class A2MXPath():
 		self.__sigod['B'] = self.__b.pubkeyCompressed()
 		self.__sigod['T'] = self.__t
 
-		self.__sigod['UA'] = self.__ua
-		sigdata_a = BSON.encode(self.__sigod)
-		del self.__sigod['UA']
+		if self.__ua:
+			self.__sigod['UA'] = self.__ua
+			sigdata_a = BSON.encode(self.__sigod)
+			del self.__sigod['UA']
+		else:
+			sigdata_a = BSON.encode(self.__sigod)
 
-		self.__sigod['UB'] = self.__ub
-		sigdata_b = BSON.encode(self.__sigod)
-		del self.__sigod['UB']
+		if self.__ub:
+			self.__sigod['UB'] = self.__ub
+			sigdata_b = BSON.encode(self.__sigod)
+			del self.__sigod['UB']
+		else:
+			sigdata_b = BSON.encode(self.__sigod)
 
 		self.__sa = SA
 		if SA == None:

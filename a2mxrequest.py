@@ -113,6 +113,8 @@ class A2MXRequest():
 
 	@A2MXRequest
 	def path(self, **kwargs):
+		assert 'no_URI' not in kwargs
+
 		if kwargs['A'] == self.node.ecc.pubkeyCompressed():
 			kwargs['A'] = self.node.ecc
 		elif kwargs['B'] == self.node.ecc.pubkeyCompressed():

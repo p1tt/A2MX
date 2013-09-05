@@ -18,11 +18,11 @@ from a2mxpath import A2MXPath
 def now():
 	return BSON.decode(BSON.encode({'t': datetime.datetime.now(datetime.timezone.utc)}), tz_aware=True)['t']
 
-class A2MXDirectException(Exception):
+class A2MXAccessException(Exception):
 	pass
 
-def A2MXDirectRequest(fn):
-	fn.A2MXDirectRequest__marker__ = True
+def A2MXAccessRequest(fn):
+	fn.A2MXAccessRequest__marker__ = True
 	return fn
 
 if config['mongodb_uri'] == None:
@@ -38,16 +38,19 @@ class A2MXConnectedClients:
 	def __init__(self):
 		self.clients = {}
 
-	def add(self, direct_instance):
-		client_hash = direct_instance.ecc.pubkey_hash()
+	def add(self, access_instance):
+		client_hash = access_instance.ecc.pubkey_hash()
 
 		if client_hash not in self.clients:
 			self.clients[client_hash] = []
-		self.clients[client_hash].append(direct_instance)
+		self.clients[client_hash].append(access_instance)
 
-	def remove(self, direct_instance):
-		client_hash = direct_instance.ecc.pubkey_hash()
-		self.clients[client_hash].remove(direct_instance)
+	def remove(self, access_instance):
+		client_hash = access_instance.ecc.pubkey_hash()
+		try:
+			self.clients[client_hash].remove(access_instance)
+		except KeyError:
+			pass
 
 	def online(self, client_hash):
 		if client_hash not in self.clients:
@@ -56,10 +59,10 @@ class A2MXConnectedClients:
 
 connected_clients = A2MXConnectedClients()
 
-def A2MXDirectStore(node, data):
+def A2MXAccessStore(node, data):
 	b58node = ECC.b58(node)
 	if mongoclient == None or b58node not in mongoclient.database_names():
-		raise A2MXDirectException('Unknown node {}'.format(b58node))
+		raise A2MXAccessException('Unknown node {}'.format(b58node))
 	# FIXME check if data already in DB
 	_id = mongoclient[b58node]['inbox'].insert({ 'timestamp': datetime.datetime.now(datetime.timezone.utf), 'data': data })
 
@@ -69,7 +72,7 @@ def A2MXDirectStore(node, data):
 	for client in clients:
 		client.sendfun(data)
 
-def A2MXDirectPaths():
+def A2MXAccessPaths():
 	if mongoclient == None:
 		return
 	for node in mongoclient.database_names():
@@ -78,7 +81,7 @@ def A2MXDirectPaths():
 		v = mongoclient[node]['path'].find()
 		if v.count() == 0:
 			continue
-		if v.count() != 2:
+		if v.count() > 2:
 			print("invalid path spec in DB for", node)
 			continue
 		for p in v:
@@ -86,10 +89,10 @@ def A2MXDirectPaths():
 				del p['_id']
 				yield A2MXPath(**p)
 
-class A2MXDirect():
+class A2MXAccess():
 	def __init__(self, node, sendfun):
 		if mongoclient == None:
-			raise A2MXDirectException('No MongoDB connection available.')
+			raise A2MXAccessException('No MongoDB connection available.')
 		self.node = node
 		self.sendfun = sendfun
 		self.ecc = None
@@ -98,7 +101,7 @@ class A2MXDirect():
 	def disconnected(self):
 		if self.auth:
 			connected_clients.remove(self)
-		print("A2MXDirect disconnect", self.ecc.b58_pubkey_hash() if self.ecc else "unknown", "authenticated" if self.auth == True else "not authenticated")
+		print("A2MXAccess disconnect", self.ecc.b58_pubkey_hash() if self.ecc else "unknown", "authenticated" if self.auth == True else "not authenticated")
 
 	def process(self, data):
 		rid = data[:4]
@@ -131,7 +134,7 @@ class A2MXDirect():
 			if self.ecc.b58_pubkey_hash() not in mongoclient.database_names():
 				return { 'error': 'Unknown Node {}'.format(self.ecc.b58_pubkey_hash()) }
 			self.db = mongoclient[self.ecc.b58_pubkey_hash()]
-			print("got direct to", self.ecc.b58_pubkey_hash())
+			print("access request to", self.ecc.b58_pubkey_hash())
 			self.auth = now()
 			return { 'auth': self.auth, 'pubkey': self.node.ecc.pubkey_c() }
 		if isinstance(self.auth, datetime.datetime):
@@ -150,11 +153,11 @@ class A2MXDirect():
 			return { 'error': 'Not authenticated' }
 
 		if len(bs) > 1:
-			raise A2MXDirectException('Only one command at a time supported')
+			raise A2MXAccessException('Only one command at a time supported')
 		for k, v in bs.items():
 			f = getattr(self, k, None)
-			if getattr(f, 'A2MXDirectRequest__marker__', False) != True:
-				raise A2MXDirectException('Invalid request {}'.format(k))
+			if getattr(f, 'A2MXAccessRequest__marker__', False) != True:
+				raise A2MXAccessException('Invalid request {}'.format(k))
 			args = None
 			kwargs = None
 			for a in v:
@@ -162,40 +165,40 @@ class A2MXDirect():
 					if args == None:
 						args = a
 					else:
-						raise A2MXDirectException('Invalid arguments')
+						raise A2MXAccessException('Invalid arguments')
 				if isinstance(a, (dict, OrderedDict)):
 					if kwargs == None:
 						kwargs = a
 					else:
-						raise A2MXDirectException('Invalid arguments')
+						raise A2MXAccessException('Invalid arguments')
 			args = args if args else []
 			kwargs = kwargs if kwargs else {}
 			return f(*args, **kwargs)
 
-	@A2MXDirectRequest
-	def path(self, **kwargs):
-		p = A2MXPath(**kwargs)
-		if p.endnode.pubkey_c() == self.node.ecc.pubkey_c():
-			raise A2MXDirectException('Invalid path to myself')
+	@A2MXAccessRequest
+	def getpath(self):
+		p = A2MXPath(self.node.ecc, self.ecc, no_URI=True)
+		return p.data
 
-		op = A2MXPath(self.node.ecc, self.ecc)
+	@A2MXAccessRequest
+	def setpath(self, **kwargs):
+		p = A2MXPath(**kwargs)
+		assert p.isComplete
 
 		self.db['path'].remove()
 		self.db['path'].insert(p.data)
-		self.db['path'].insert(op.data)
 		self.node.new_path(p)
-		self.node.new_path(op)
 		return True
 
-	@A2MXDirectRequest
+	@A2MXAccessRequest
 	def find(self, query, rep):
 		return [ x for x in self.db['inbox'].find(query, rep) ]
 
-	@A2MXDirectRequest
+	@A2MXAccessRequest
 	def save(self, doc):
 		return self.db['inbox'].save(doc)
 
-	@A2MXDirectRequest
+	@A2MXAccessRequest
 	def find_routes(self, src, dst, min_hops, max_hops, max_count):
 		if not src or src == b'\x00':
 			src = self.node.ecc.pubkey_hash()
@@ -209,7 +212,7 @@ class A2MXDirect():
 				break
 		return send
 
-	@A2MXDirectRequest
+	@A2MXAccessRequest
 	def sendto(self, node, data):
 		return self.node.sendto(node, data)
 

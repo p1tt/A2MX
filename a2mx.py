@@ -16,7 +16,7 @@ from ecc import ECC
 from config import config
 from a2mxstream import A2MXStream
 from a2mxrequest import A2MXRequest
-import a2mxdirect
+import a2mxaccess
 
 class Unbuffered:
 	def __init__(self, stream):
@@ -105,7 +105,7 @@ class A2MXNode():
 			sys.stdout.write("\x1b]2;{}: {}\x07".format(cwd, mypub))
 		print("I am", mypub)
 
-		for path in a2mxdirect.A2MXDirectPaths():
+		for path in a2mxaccess.A2MXAccessPaths():
 			self.new_path(path)
 
 		self.request = A2MXRequest(self)
@@ -202,9 +202,9 @@ class A2MXNode():
 
 		if node not in self.connected_nodes:
 			try:
-				a2mxdirect.A2MXDirectStore(node, data)
+				a2mxaccess.A2MXAccessStore(node, data)
 				print("stored data for {}".format(ECC.b58(node)))
-			except a2mxdirect.A2MXDirectException:
+			except a2mxaccess.A2MXAccessException:
 				print("cannot send to node {}".format(ECC.b58(node)))
 			return False
 		self.connected_nodes[node].raw_send(data)
