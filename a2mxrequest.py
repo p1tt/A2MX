@@ -65,7 +65,7 @@ class A2MXRequest():
 				parseRequest(nextrequest.items())
 				return
 			print("Invalid request {}({}, {}) {}".format(fn, args, kwargs, 'unsigned' if not signature else 'signed' if sigok else 'invalid signed'))
-	
+
 		for fn, argtuple in request:
 			if len(argtuple) == 1:
 				args = None
@@ -100,6 +100,7 @@ class A2MXRequest():
 		elif kwargs['B'] == self.node.ecc.pubkeyCompressed():
 			kwargs['B'] = self.node.ecc
 		p = A2MXPath(**kwargs)
+
 		assert p.isComplete
 		self.node.new_path(p, self.stream)
 		if self.stream and self.stream.path == p and not self.stream.path.isComplete:

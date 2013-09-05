@@ -142,24 +142,28 @@ class A2MXNode():
 
 		if stream.path.isComplete:
 			self.del_path(stream.path)
+		else:
+			print("not deleting incomplete path", stream.path)
 
 	def new_path(self, path, stream=None):
+		fromhash = stream.remote_ecc.pubkeyHashBase58() if stream else 'myself'
 		if path in self.paths:
 			oldindex = self.paths.index(path)
 			oldpath = self.paths[oldindex]
 			if path is oldpath:
+				print("updating path (old not existing anymore) from {}".format(fromhash), "\n  new:", path)
 				del self.paths[oldindex]
 			elif path.equal(oldpath):
-				print("ignoring known path from {}\n ".format(stream.remote_ecc.pubkeyHashBase58() if stream else 'myself'), path)
+				print("ignoring known path from {}\n ".format(fromhash), path)
 				return
 			elif path.is_better_than(oldpath):
-				print("updating path\n  old:", oldpath, "\n  new:", path)
+				print("updating path from {}\n  old:".format(fromhash), oldpath, "\n  new:", path)
 				del self.paths[oldindex]
 			else:
-				print("ignoring path with older timestamp as known path\n  old:", oldpath, "\n  new:", path)
+				print("ignoring path with older timestamp as known path from {}\n  old:".format(fromhash), oldpath, "\n  new:", path)
 				return
 		else:
-			print("new path\n ", path)
+			print("new path from {}\n ".format(fromhash), path)
 
 		self.paths.append(path)
 		try:
@@ -245,9 +249,9 @@ class A2MXNode():
 		pathlist = self.nodes[dst]
 		if len(pathlist) == 0:
 			return []
-		dst_pubc = pathlist[0].endnode.pubkey_c()
+		dst_pubc = pathlist[0].pubkeyCompressed(dst)
 
-		def find_path(pathlist, thispath=None, step=1):
+		def find_path(pathlist, lasthop, thispath=None, step=1):
 			if maxhops != None and step >= maxhops:
 				return
 			if thispath == None:
@@ -255,22 +259,22 @@ class A2MXNode():
 			for path in pathlist:
 				if path.deleted:
 					continue
-				lasthop = path.lasthop.pubkey_hash()
-				lasthop_pubc = path.lasthop.pubkey_c()
-				if lasthop == src:
+				nexthop = path.otherHash(lasthop)
+				nexthop_pubc = path.pubkeyCompressed(nexthop)
+				if nexthop == src:
 					ytp = thispath[:]
-					ytp.append(lasthop_pubc)
+					ytp.append(nexthop_pubc)
 					yield A2MXRoute(ytp)
 					continue
-				if lasthop == dst:
+				if nexthop == dst:
 					continue
-				if lasthop_pubc in thispath:
+				if nexthop_pubc in thispath:
 					continue
 				tp = thispath[:]
-				tp.append(lasthop_pubc)
-				for p in find_path(self.nodes[lasthop], tp, step+1):
+				tp.append(nexthop_pubc)
+				for p in find_path(self.nodes[lasthop], lasthop, tp, step+1):
 					yield p
-		return find_path(pathlist)
+		return find_path(pathlist, dst)
 
 	def shortest_route(self, src, dst):
 		try:

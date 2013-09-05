@@ -283,6 +283,7 @@ class A2MXStream():
 			data = data[0xFFFF:]
 			data_remaining = len(data) > 0
 			first_byte = 0xFF if data_remaining else 1 if direct else 2 if access else 0
+			print("first_byte", first_byte)
 
 			pre = struct.pack('>BLH', first_byte, rid, len(part))
 			self.__send_queue.append(pre + part)

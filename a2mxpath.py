@@ -27,14 +27,14 @@ class A2MXPath():
 			self.__a = ECC(pubkey_compressed=A)
 		else:
 			self.__a = A
-			if not no_URI and self.__a.hasPrivkey():
+			if not SA and not no_URI and self.__a.hasPrivkey():
 				UA = config['publish_axuri']
 
 		if not isinstance(B, ECC):
 			self.__b = ECC(pubkey_compressed=B)
 		else:
 			self.__b = B
-			if not no_URI and self.__b.hasPrivkey():
+			if not SB and not no_URI and self.__b.hasPrivkey():
 				UB = config['publish_axuri']
 
 		def testURI(uri):
@@ -241,6 +241,13 @@ class A2MXPath():
 		elif otherHash == self.BHash:
 			return self.AHash
 		raise ValueError('otherHash is neither A or B.')
+
+	def pubkeyCompressed(self, h):
+		if h == self.AHash:
+			return self.__a.pubkeyCompressed()
+		if h == self.BHash:
+			return self.__b.pubkeyCompressed()
+		raise ValueError("Hash is neither A nor B")
 
 	@property
 	def hashes(self):

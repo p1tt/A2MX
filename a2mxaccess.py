@@ -191,6 +191,11 @@ class A2MXAccess():
 		return True
 
 	@A2MXAccessRequest
+	def paths(self):
+		paths = [ p.data for p in self.node.paths ]
+		return paths
+
+	@A2MXAccessRequest
 	def find(self, query, rep):
 		return [ x for x in self.db['inbox'].find(query, rep) ]
 
