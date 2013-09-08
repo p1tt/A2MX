@@ -91,8 +91,6 @@ def A2MXAccessPaths():
 
 class A2MXAccess():
 	def __init__(self, node, sendfun):
-		if mongoclient == None:
-			raise A2MXAccessException('No MongoDB connection available.')
 		self.node = node
 		self.sendfun = sendfun
 		self.ecc = None
@@ -131,10 +129,13 @@ class A2MXAccess():
 	def process_bson(self, bs):
 		if self.ecc == None:
 			self.ecc = ECC(pubkey_compressed=bs['access'])
-			if self.ecc.b58_pubkey_hash() not in mongoclient.database_names():
-				return { 'error': 'Unknown Node {}'.format(self.ecc.b58_pubkey_hash()) }
-			self.db = mongoclient[self.ecc.b58_pubkey_hash()]
-			print("access request to", self.ecc.b58_pubkey_hash())
+			if self.ecc.pubkeyHash() != self.node.ecc.pubkeyHash():
+				if mongoclient == None or self.ecc.b58_pubkey_hash() not in mongoclient.database_names():
+					return { 'error': 'Unknown Node {}'.format(self.ecc.b58_pubkey_hash()) }
+				self.db = mongoclient[self.ecc.b58_pubkey_hash()]
+				print("access request to", self.ecc.b58_pubkey_hash())
+			else:
+				print("access to me")
 			self.auth = now()
 			return { 'auth': self.auth, 'pubkey': self.node.ecc.pubkey_c() }
 		if isinstance(self.auth, datetime.datetime):

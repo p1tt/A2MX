@@ -12,23 +12,27 @@ from bson import BSON
 
 from ecc import ECC
 from a2mxpath import A2MXPath
+from config import config
 
 class RemoteException(Exception):
 	pass
 
-keyfile = sys.argv[1]
-hostport = sys.argv[2].split(':')
-if len(hostport) == 1:
-	host = hostport[0]
-	port = 0xA22
-elif len(hostport) == 2:
-	host = hostport[0]
-	port = int(hostport[1])
+if len(sys.argv) == 1:
+	host = 'localhost'
+	port = config['bind'][0][1]
 else:
-	raise ValueError('invalid arguments')
+	hostport = sys.argv[1].split(':')
+	if len(hostport) == 1:
+		host = hostport[0]
+		port = 0xA22
+	elif len(hostport) == 2:
+		host = hostport[0]
+		port = int(hostport[1])
+	else:
+		raise ValueError('invalid arguments')
 
-ecc = ECC(pem_keyfile=keyfile)
-print("I am", ecc.b58_pubkey_hash())
+ecc = ECC(pkcs8_der_keyfile_sign=config['sign.pkcs8.der'], pkcs8_der_keyfile_encrypt=config['encrypt.pkcs8.der'])
+print("I am", ecc.pubkeyHashBase58())
 
 def SSL(sock):
 	context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
@@ -53,20 +57,20 @@ def send(request):
 	rid = random.randint(0, 0xFFFFFF).to_bytes(4, byteorder='big')
 	data = BSON.encode(request)
 	s = rid + data
-	p = struct.pack('>BH', 1, len(s))
+	p = struct.pack('>BLH', 2, random.randint(0, 0xFFFFFFFF), len(s))
 	sock.sendall(p + s)
 
 	data = bytearray()
-	exp_len = 3
+	exp_len = 7
 	got_len = False
 	while True:
 		data += sock.recv(4096)
 		if len(data) < exp_len:
 			continue
 		if not got_len:
-			d, l = struct.unpack('>BH', data[:3])
-			assert d == 1
-			data = data[3:]
+			d, r, l = struct.unpack('>BLH', data[:7])
+			assert d == 2
+			data = data[7:]
 			got_len = True
 		if len(data) < l:
 			continue
@@ -86,20 +90,17 @@ rauth = r['auth']
 pubkey = r['pubkey']
 remote_ecc = ECC(pubkey_compressed=pubkey)
 
-lauth = os.urandom(32)
-sigdata = rauth + lauth
+sigdata = BSON.encode({ 'auth': rauth })
 sig = ecc.sign(sigdata)
-auth = send({'auth': lauth, 'sig': sig})
+auth = send({'sig': sig})
 assert 'sig' in auth
 peer_verified = remote_ecc.verify(auth['sig'], sigdata)
 assert peer_verified == True
 
-if remote_ecc.pubkey_c() != ecc.pubkey_c():
-	path = A2MXPath(ecc, remote_ecc)
-	pathup = send(request('path', **path.data))
-	print("path update", pathup)
-
-docs = send(request('find', { 'timestamp': { '$gt': datetime.datetime.min }}, {}))
-for doc in docs:
-	print(send(request('find', doc, None)))
-
+#docs = send(request('find', { 'timestamp': { '$gt': datetime.datetime.min }}, {}))
+#for doc in docs:
+#	print(send(request('find', doc, None)))
+paths = send(request('paths'))
+for path in paths:
+	p = A2MXPath(**path)
+	print(p)
