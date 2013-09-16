@@ -31,7 +31,7 @@ else:
 	else:
 		raise ValueError('invalid arguments')
 
-ecc = ECC(pkcs8_der_keyfile_sign=config['sign.pkcs8.der'], pkcs8_der_keyfile_encrypt=config['encrypt.pkcs8.der'])
+ecc = ECC(pkcs8_der_keyfile_address=config['address.pkcs8.der'], pkcs8_der_keyfile_sign=config['sign.pkcs8.der'], pkcs8_der_keyfile_encrypt=config['encrypt.pkcs8.der'])
 print("I am", ecc.pubkeyHashBase58())
 
 def SSL(sock):
@@ -85,16 +85,16 @@ def send(request):
 			return bs['data']
 		return bs
 
-r = send({'access': ecc.pubkey_c()})
+r = send({'access': ecc.pubkeyData()})
 rauth = r['auth']
 pubkey = r['pubkey']
-remote_ecc = ECC(pubkey_compressed=pubkey)
+remote_ecc = ECC(pubkey_data=pubkey)
 
 sigdata = BSON.encode({ 'auth': rauth })
-sig = ecc.sign(sigdata)
+sig = ecc.signAddress(sigdata)
 auth = send({'sig': sig})
 assert 'sig' in auth
-peer_verified = remote_ecc.verify(auth['sig'], sigdata)
+peer_verified = remote_ecc.verifyAddress(auth['sig'], sigdata)
 assert peer_verified == True
 
 #docs = send(request('find', { 'timestamp': { '$gt': datetime.datetime.min }}, {}))

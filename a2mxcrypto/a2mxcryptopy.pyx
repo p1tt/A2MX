@@ -10,6 +10,7 @@ cdef extern from "crypto.h":
 		string pubkeyHash()
 		string pubkeyHashBase58()
 		string pubkeyData()
+		string pubkeyAddress()
 
 		string signAddress(string message)
 		bint verifyAddress(string message, string signature)
@@ -48,6 +49,8 @@ cdef class A2MXcrypto:
 		return self.thisptr.pubkeyHashBase58()
 	def pubkeyData(self):
 		return self.thisptr.pubkeyData()
+	def pubkeyAddress(self):
+		return self.thisptr.pubkeyAddress()
 
 	def signAddress(self, bytes message):
 		return self.thisptr.signAddress(message)

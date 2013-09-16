@@ -1,3 +1,4 @@
+#!/home/pitt/python3.4/bin/python3.4
 #!/usr/bin/env python3
 
 import sys
@@ -97,9 +98,9 @@ class A2MXNode():
 		self.connected_nodes = {}
 		self.axuris = {}
 
-		self.ecc = ECC(pkcs8_der_keyfile_sign=config['sign.pkcs8.der'], pkcs8_der_keyfile_encrypt=config['encrypt.pkcs8.der'])
+		self.ecc = ECC(pkcs8_der_keyfile_address=config['address.pkcs8.der'], pkcs8_der_keyfile_sign=config['sign.pkcs8.der'], pkcs8_der_keyfile_encrypt=config['encrypt.pkcs8.der'])
 
-		mypub = self.ecc.b58_pubkey_hash()
+		mypub = self.ecc.pubkeyHashBase58()
 		if sys.stdout.isatty():
 			cwd = os.getcwd().rsplit('/', 1)[1]
 			sys.stdout.write("\x1b]2;{}: {}\x07".format(cwd, mypub))

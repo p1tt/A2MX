@@ -16,7 +16,7 @@ Crypto::Crypto(std::string keyfilepath, std::string password) {
 }
 
 Crypto::Crypto(std::string pubkey) {
-	m_a2mxcrypto = new A2MXcrypto(str2sb(pubkey));
+	m_a2mxcrypto = new A2MXcrypto(str2sb(pubkey), A2MXcrypto::pubkeyDataType::Auto);
 }
 
 Crypto::~Crypto() {
@@ -34,6 +34,10 @@ std::string Crypto::pubkeyHashBase58() {
 
 std::string Crypto::pubkeyData() {
 	return sb2str(m_a2mxcrypto->pubkeyData());
+}
+
+std::string Crypto::pubkeyAddress() {
+	return sb2str(m_a2mxcrypto->pubkeyCompressed(m_a2mxcrypto->pubkeyAddress()));
 }
 
 std::string Crypto::signAddress(std::string message) {

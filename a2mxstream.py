@@ -16,13 +16,12 @@ from a2mxcommon import InvalidDataException
 from a2mxrequest import A2MXRequest
 
 def SSL(sock, server=False):
-	context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
+	context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
 	context.verify_mode = ssl.CERT_NONE
-#	context.set_verify(ssl.VERIFY_PEER | ssl.VERIFY_FAIL_IF_NO_PEER_CERT | ssl.VERIFY_CLIENT_ONCE, callback_func)
-	context.set_ecdh_curve('secp521r1')
-	context.options = ssl.OP_SINGLE_DH_USE | ssl.OP_SINGLE_ECDH_USE
-	context.set_ciphers('ECDHE-ECDSA-AES256-SHA')
+	context.options = ssl.OP_SINGLE_DH_USE | ssl.OP_CIPHER_SERVER_PREFERENCE
+	context.set_ciphers('DHE-RSA-CAMELLIA256-SHA')
 	if server:
+		context.load_dh_params(config['dh.pem'])
 		context.load_cert_chain(config['tls.cert.pem'], config['tls.key.pem'])
 	return context.wrap_socket(sock, server_side=server, do_handshake_on_connect=False)
 
@@ -67,7 +66,7 @@ class A2MXStream():
 
 	def __str__(self):
 		return '{} Remote: {} Path: {} In: {}B Out: {}B{}'.format(
-			'Incoming' if self.uri == None else 'Outgoing', self.remote_ecc.b58_pubkey_hash(),
+			'Incoming' if self.uri == None else 'Outgoing', self.remote_ecc.pubkeyHashBase58(),
 			self.path, self.bytes_in, self.bytes_out,
 			' disconnected' if not self.__connected else '')
 
@@ -150,6 +149,12 @@ class A2MXStream():
 			return
 
 		self.sock = SSL(self.sock, server=self.uri == None)
+		if self.uri == None:
+			with open(config['tls.cert.pem'], 'r') as f:
+				pemcert = f.read()
+			self.tlscert = ssl.PEM_cert_to_DER_cert(pemcert)
+		else:
+			self.tlscert = False
 
 		def do_handshake():
 			try:
@@ -158,7 +163,7 @@ class A2MXStream():
 				return
 			except ssl.SSLWantWriteError:
 				return
-			except (ssl.SSLError, ConnectionResetError):
+			except (ssl.SSLError, ConnectionResetError) as e:
 				self.connectionfailure()
 				return
 			self.node.wremove(self)
@@ -178,7 +183,10 @@ class A2MXStream():
 		do_handshake()
 
 	def __send_pub(self):
-		self.send(self.node.ecc.pubkeyCompressed())
+		self.send(self.node.ecc.pubkeyData())
+		if self.tlscert:		# send tls cert signature if we are the server
+			tlscertsig = self.node.ecc.sign(self.tlscert)
+			self.send(tlscertsig)
 		self.__pub_sent = True
 
 	def getLength(self, length):
@@ -233,8 +241,8 @@ class A2MXStream():
 			if len(data) == 0:
 				return
 
-		if self.remote_ecc == None:	# first data we expect is the compressed remote public key
-			self.remote_ecc = ECC(pubkey_compressed=data)
+		if self.remote_ecc == None:	# first data we expect is the compressed remote public keys data
+			self.remote_ecc = ECC(pubkey_data=data)
 
 			if self.remote_pubkey_hash != None:
 				if self.remote_ecc.pubkeyHash() != self.remote_pubkey_hash:
@@ -249,6 +257,11 @@ class A2MXStream():
 			if not self.__pub_sent:	# send our public key if we haven't already
 				self.__send_pub()
 				self.send(self.request.request('path', **self.path.data))
+		elif not self.tlscert:		# the server has to send a signature of his TLS certificate
+			tlscert_ok = self.remote_ecc.verify(data, self.sock.getpeercert(True))
+			if not tlscert_ok:
+				raise ValueError('Signature verification of server TLS certificate failed!')
+			self.tlscert = True
 		else:
 			self.request.parseRequest(data)
 
@@ -333,6 +346,6 @@ class A2MXStream():
 
 	def connectionfailure(self):
 		if self.__access == False:
-			print(self.remote_ecc.b58_pubkey_hash() if self.remote_ecc else self.uri, "connection failure")
+			print(self.remote_ecc.pubkeyHashBase58() if self.remote_ecc else self.uri, "connection failure")
 		self.shutdown()
 

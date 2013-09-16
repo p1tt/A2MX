@@ -5,11 +5,6 @@ from collections import OrderedDict
 import pymongo
 from bson import BSON
 
-from pyasn1.type import univ
-from pyasn1.codec.der import encoder
-from pyasn1.codec.der import decoder
-from pyasn1.error import PyAsn1Error
-
 from config import config
 from ecc import ECC
 
@@ -39,14 +34,14 @@ class A2MXConnectedClients:
 		self.clients = {}
 
 	def add(self, access_instance):
-		client_hash = access_instance.ecc.pubkey_hash()
+		client_hash = access_instance.ecc.pubkeyHash()
 
 		if client_hash not in self.clients:
 			self.clients[client_hash] = []
 		self.clients[client_hash].append(access_instance)
 
 	def remove(self, access_instance):
-		client_hash = access_instance.ecc.pubkey_hash()
+		client_hash = access_instance.ecc.pubkeyHash()
 		try:
 			self.clients[client_hash].remove(access_instance)
 		except KeyError:
@@ -99,7 +94,7 @@ class A2MXAccess():
 	def disconnected(self):
 		if self.auth:
 			connected_clients.remove(self)
-		print("A2MXAccess disconnect", self.ecc.b58_pubkey_hash() if self.ecc else "unknown", "authenticated" if self.auth == True else "not authenticated")
+		print("A2MXAccess disconnect", self.ecc.pubkeyHashBase58() if self.ecc else "unknown", "authenticated" if self.auth == True else "not authenticated")
 
 	def process(self, data):
 		rid = data[:4]
@@ -128,20 +123,20 @@ class A2MXAccess():
 
 	def process_bson(self, bs):
 		if self.ecc == None:
-			self.ecc = ECC(pubkey_compressed=bs['access'])
+			self.ecc = ECC(pubkey_data=bs['access'])
 			if self.ecc.pubkeyHash() != self.node.ecc.pubkeyHash():
-				if mongoclient == None or self.ecc.b58_pubkey_hash() not in mongoclient.database_names():
-					return { 'error': 'Unknown Node {}'.format(self.ecc.b58_pubkey_hash()) }
-				self.db = mongoclient[self.ecc.b58_pubkey_hash()]
-				print("access request to", self.ecc.b58_pubkey_hash())
+				if mongoclient == None or self.ecc.pubkeyHashBase58() not in mongoclient.database_names():
+					return { 'error': 'Unknown Node {}'.format(self.ecc.pubkeyHashBase58()) }
+				self.db = mongoclient[self.ecc.pubkeyHashBase58()]
+				print("access request to", self.ecc.pubkeyHashBase58())
 			else:
 				print("access to me")
 			self.auth = now()
-			return { 'auth': self.auth, 'pubkey': self.node.ecc.pubkey_c() }
+			return { 'auth': self.auth, 'pubkey': self.node.ecc.pubkeyAddress() }
 		if isinstance(self.auth, datetime.datetime):
 			sigdata = BSON.encode({ 'auth': self.auth })
-			verify = self.ecc.verify(bs['sig'], sigdata)
-			lsig = self.node.ecc.sign(sigdata)
+			verify = self.ecc.verifyAddress(bs['sig'], sigdata)
+			lsig = self.node.ecc.signAddress(sigdata)
 			if not verify:
 				return { 'error': 'Not authenticated' }
 
@@ -207,7 +202,7 @@ class A2MXAccess():
 	@A2MXAccessRequest
 	def find_routes(self, src, dst, min_hops, max_hops, max_count):
 		if not src or src == b'\x00':
-			src = self.node.ecc.pubkey_hash()
+			src = self.node.ecc.pubkeyHash()
 		routes = self.node.find_routes_from(src, dst, max_hops)
 		send = []
 		for route in routes:

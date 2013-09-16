@@ -12,8 +12,8 @@ def now():
 
 class A2MXPath():
 	def __init__(self, A=None, B=None, T=None, UA=None, UB=None, SA=None, SB=None, D=None, DS=None, no_URI=False):
-		# A = node A compressed public key
-		# B = node B compressed public key
+		# A = node A public key data (address, sign and encrypt compressed public keys)
+		# B = node B public key data
 		# T = timestamp
 		# UA = AX URI node A
 		# UB = AX URI node B
@@ -24,14 +24,14 @@ class A2MXPath():
 		# A must always be the smaller binary value
 
 		if not isinstance(A, ECC):
-			self.__a = ECC(pubkey_compressed=A)
+			self.__a = ECC(pubkey_data=A)
 		else:
 			self.__a = A
 			if not SA and not no_URI and self.__a.hasPrivkey():
 				UA = config['publish_axuri']
 
 		if not isinstance(B, ECC):
-			self.__b = ECC(pubkey_compressed=B)
+			self.__b = ECC(pubkey_data=B)
 		else:
 			self.__b = B
 			if not SB and not no_URI and self.__b.hasPrivkey():
@@ -59,7 +59,7 @@ class A2MXPath():
 		self.__ua = UA
 		self.__ub = UB
 
-		if self.__a.pubkeyCompressed() > self.__b.pubkeyCompressed():
+		if self.__a.pubkeyData() > self.__b.pubkeyData():
 			self.__a, self.__b = self.__b, self.__a
 			self.__ua, self.__ub = self.__ub, self.__ua
 
@@ -71,8 +71,8 @@ class A2MXPath():
 			self.__t = now()
 
 		self.__sigod = OrderedDict()
-		self.__sigod['A'] = self.__a.pubkeyCompressed()
-		self.__sigod['B'] = self.__b.pubkeyCompressed()
+		self.__sigod['A'] = self.__a.pubkeyData()
+		self.__sigod['B'] = self.__b.pubkeyData()
 		self.__sigod['T'] = self.__t
 
 		if self.__ua:
@@ -92,18 +92,18 @@ class A2MXPath():
 		self.__sa = SA
 		if SA == None:
 			if self.__a.hasPrivkey():
-				self.__sa = self.__a.sign(sigdata_a)
+				self.__sa = self.__a.signAddress(sigdata_a)
 		else:
-			verify = self.__a.verify(SA, sigdata_a)
+			verify = self.__a.verifyAddress(SA, sigdata_a)
 			if not verify:
 				raise InvalidDataException('SA signature verify failed.')
 
 		self.__sb = SB
 		if SB == None:
 			if self.__b.hasPrivkey():
-				self.__sb = self.__b.sign(sigdata_b)
+				self.__sb = self.__b.signAddress(sigdata_b)
 		else:
-			verify = self.__b.verify(SB, sigdata_b)
+			verify = self.__b.verifyAddress(SB, sigdata_b)
 			if not verify:
 				raise InvalidDataException('SA signature verify failed.')
 
@@ -125,12 +125,12 @@ class A2MXPath():
 			self.__sigod['SB'] = self.__sb
 			self.__sigod['D'] = self.__d
 			sigdata = BSON.encode(self.__sigod)
-			verify = self.__a.verify(self.__ds, sigdata) or self.__b.verify(self.__ds, sigdata)
+			verify = self.__a.verifyAddress(self.__ds, sigdata) or self.__b.verifyAddress(self.__ds, sigdata)
 			if not verify:
 				raise InvalidDataException('DS signature verify failed.')
 
 	def __getstate__(self):
-		state = { 'A': self.__a.pubkey_c(), 'B': self.__b.pubkey_c(), 'T': self.__t, 'SA': self.__sa, 'SB': self.__sb }
+		state = { 'A': self.__a.pubkeyData(), 'B': self.__b.pubkeyData(), 'T': self.__t, 'SA': self.__sa, 'SB': self.__sb }
 		if self.__ua:
 			state['UA'] = self.__ua
 		if self.__ub:
@@ -141,8 +141,8 @@ class A2MXPath():
 		return state
 
 	def __setstate__(self, state):
-		self.__a = ECC(pubkey_compressed=state['A'])
-		self.__b = ECC(pubkey_compressed=state['B'])
+		self.__a = ECC(pubkey_data=state['A'])
+		self.__b = ECC(pubkey_data=state['B'])
 		self.__t = state['T']
 		self.__sa = state['SA']
 		self.__sb = state['SB']
@@ -178,7 +178,7 @@ class A2MXPath():
 
 	@property
 	def A(self):
-		return self.__a.pubkeyCompressed()
+		return self.__a.pubkeyData()
 	@property
 	def AHash(self):
 		return self.__a.pubkeyHash()
@@ -188,7 +188,7 @@ class A2MXPath():
 
 	@property
 	def B(self):
-		return self.__b.pubkeyCompressed()
+		return self.__b.pubkeyData()
 	@property
 	def BHash(self):
 		return self.__b.pubkeyHash()
@@ -219,9 +219,9 @@ class A2MXPath():
 		self.__sigod['D'] = self.__d
 		sigdata = BSON.encode(self.__sigod)
 		if self.__a.hasPrivkey():
-			self.__ds = self.__a.sign(sigdata)
+			self.__ds = self.__a.signAddress(sigdata)
 		elif self.__b.hasPrivkey():
-			self.__ds = self.__b.sign(sigdata)
+			self.__ds = self.__b.signAddress(sigdata)
 		else:
 			raise ValueError('Cannot mark path as deleted without private key.')
 
@@ -242,11 +242,11 @@ class A2MXPath():
 			return self.AHash
 		raise ValueError('otherHash is neither A or B.')
 
-	def pubkeyCompressed(self, h):
+	def pubkeyData(self, h):
 		if h == self.AHash:
-			return self.__a.pubkeyCompressed()
+			return self.A
 		if h == self.BHash:
-			return self.__b.pubkeyCompressed()
+			return self.B
 		raise ValueError("Hash is neither A nor B")
 
 	@property

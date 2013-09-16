@@ -1,6 +1,8 @@
 config = {
 	'tls.cert.pem': '.a2mx/tls.cert.pem',
 	'tls.key.pem': '.a2mx/tls.key.pem',
+	'dh.pem': '.a2mx/dh.pem',
+	'address.pkcs8.der': '.a2mx/address.pkcs8.der',
 	'sign.pkcs8.der': '.a2mx/sign.pkcs8.der',
 	'encrypt.pkcs8.der': '.a2mx/encrypt.pkcs8.der',
 	'paths.db': '.a2mx/paths.db',

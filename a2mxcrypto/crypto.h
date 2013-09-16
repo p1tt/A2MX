@@ -9,9 +9,10 @@ class Crypto {
 		Crypto(std::string pubkey_data);
 		~Crypto();
 
-		std::string pubkeyData();
 		std::string pubkeyHash();
 		std::string pubkeyHashBase58();
+		std::string pubkeyData();
+		std::string pubkeyAddress();
 
 		bool hasPrivkey() {
 			return m_a2mxcrypto->hasPrivkey();

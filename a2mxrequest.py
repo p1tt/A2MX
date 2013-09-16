@@ -95,9 +95,9 @@ class A2MXRequest():
 	def path(self, **kwargs):
 		assert 'no_URI' not in kwargs
 
-		if kwargs['A'] == self.node.ecc.pubkeyCompressed():
+		if kwargs['A'] == self.node.ecc.pubkeyData():
 			kwargs['A'] = self.node.ecc
-		elif kwargs['B'] == self.node.ecc.pubkeyCompressed():
+		elif kwargs['B'] == self.node.ecc.pubkeyData():
 			kwargs['B'] = self.node.ecc
 		p = A2MXPath(**kwargs)
 
@@ -105,7 +105,7 @@ class A2MXRequest():
 		self.node.new_path(p, self.stream)
 		if self.stream and self.stream.path == p and not self.stream.path.isComplete:
 			self.stream.path = p
-			print("incoming" if self.stream.uri == None else "outgoing", "connection up with", self.stream.remote_ecc.b58_pubkey_hash())
+			print("incoming" if self.stream.uri == None else "outgoing", "connection up with", self.stream.remote_ecc.pubkeyHashBase58())
 			if not self.node.add_stream(self.stream):
 				print("add_stream == False")
 				self.stream.shutdown()
