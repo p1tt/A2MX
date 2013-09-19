@@ -19,7 +19,8 @@ def SSL(sock, server=False):
 	context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
 	context.verify_mode = ssl.CERT_NONE
 	context.options = ssl.OP_SINGLE_DH_USE | ssl.OP_CIPHER_SERVER_PREFERENCE
-	context.set_ciphers('DHE-RSA-CAMELLIA256-SHA')
+#	context.set_ciphers('DHE-RSA-CAMELLIA256-SHA')
+	context.set_ciphers('DHE-RSA-AES256-GCM-SHA384')
 	if server:
 		context.load_dh_params(config['dh.pem'])
 		context.load_cert_chain(config['tls.cert.pem'], config['tls.key.pem'])
@@ -158,10 +159,12 @@ class A2MXStream():
 
 		def do_handshake():
 			try:
+				print("TRY IT!")
 				self.sock.do_handshake()
 			except ssl.SSLWantReadError:
 				return
 			except ssl.SSLWantWriteError:
+				self.node.wadd(self)
 				return
 			except (ssl.SSLError, ConnectionResetError) as e:
 				self.connectionfailure()
@@ -179,13 +182,12 @@ class A2MXStream():
 		self.__select_w_fun = (do_handshake, [], {})
 		self.__select_r_fun = (do_handshake, [], {})
 		self.node.add(self)
-		self.node.wadd(self)
 		do_handshake()
 
 	def __send_pub(self):
 		self.send(self.node.ecc.pubkeyData())
 		if self.tlscert:		# send tls cert signature if we are the server
-			tlscertsig = self.node.ecc.sign(self.tlscert)
+			tlscertsig = self.node.ecc.signAddress(self.tlscert)
 			self.send(tlscertsig)
 		self.__pub_sent = True
 
@@ -258,7 +260,7 @@ class A2MXStream():
 				self.__send_pub()
 				self.send(self.request.request('path', **self.path.data))
 		elif not self.tlscert:		# the server has to send a signature of his TLS certificate
-			tlscert_ok = self.remote_ecc.verify(data, self.sock.getpeercert(True))
+			tlscert_ok = self.remote_ecc.verifyAddress(data, self.sock.getpeercert(True))
 			if not tlscert_ok:
 				raise ValueError('Signature verification of server TLS certificate failed!')
 			self.tlscert = True
@@ -345,6 +347,10 @@ class A2MXStream():
 		self.cleanstate()
 
 	def connectionfailure(self):
+		import sys
+		import traceback
+		if sys.exc_info() != (None, None, None):
+			traceback.print_exc()
 		if self.__access == False:
 			print(self.remote_ecc.pubkeyHashBase58() if self.remote_ecc else self.uri, "connection failure")
 		self.shutdown()

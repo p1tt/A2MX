@@ -98,7 +98,7 @@ class A2MXNode():
 		self.connected_nodes = {}
 		self.axuris = {}
 
-		self.ecc = ECC(pkcs8_der_keyfile_address=config['address.pkcs8.der'], pkcs8_der_keyfile_sign=config['sign.pkcs8.der'], pkcs8_der_keyfile_encrypt=config['encrypt.pkcs8.der'])
+		self.ecc = ECC(keyfile=config['keyfile'])
 
 		mypub = self.ecc.pubkeyHashBase58()
 		if sys.stdout.isatty():

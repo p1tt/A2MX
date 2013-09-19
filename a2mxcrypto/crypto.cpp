@@ -65,3 +65,8 @@ std::string Crypto::decrypt(std::string data) {
 		throw A2MXcrypto::Error("Cannot decrypt without private key");
 	return sb2str(m_a2mxcrypto->decrypt(str2sb(data)));
 }
+
+void Crypto::createNewKeyFile(const std::string& keyfilepath, std::string password) {
+	A2MXcrypto::createNewKeyFile(keyfilepath, str2sb(password));
+}
+

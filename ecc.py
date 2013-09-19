@@ -3,9 +3,9 @@ from a2mxcrypto import A2MXcrypto
 b58chars = b'123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
 class ECC():
-	def __init__(self, pkcs8_der_keyfile_address=None, pkcs8_der_keyfile_sign=None, pkcs8_der_keyfile_encrypt=None, pubkey_data=None):
-		if pkcs8_der_keyfile_address and pkcs8_der_keyfile_sign and pkcs8_der_keyfile_encrypt:
-			self.crypto = A2MXcrypto(der_keyfile_address=pkcs8_der_keyfile_address.encode('UTF-8'), der_keyfile_sign=pkcs8_der_keyfile_sign.encode('UTF-8'), der_keyfile_encrypt=pkcs8_der_keyfile_encrypt.encode('UTF-8'))
+	def __init__(self, keyfile=None, pubkey_data=None):
+		if keyfile:
+			self.crypto = A2MXcrypto(keyfile.encode('UTF-8'), b'')
 		elif pubkey_data:
 			pubkey_data = bytes(pubkey_data)
 			self.crypto = A2MXcrypto(pubkey_data=pubkey_data)

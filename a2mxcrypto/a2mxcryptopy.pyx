@@ -21,6 +21,9 @@ cdef extern from "crypto.h":
 		string encrypt(string data)
 		string decrypt(string data)
 
+cdef extern from "crypto.h" namespace "Crypto":
+	void createNewKeyFile(string path, string password)
+
 cdef class A2MXcrypto:
 	cdef Crypto *thisptr
 
@@ -66,3 +69,7 @@ cdef class A2MXcrypto:
 		return self.thisptr.encrypt(data)
 	def decrypt(self, bytes data):
 		return self.thisptr.decrypt(data)
+
+	@staticmethod
+	def createNewKeyFile(bytes path, bytes password):
+		createNewKeyFile(path, password)

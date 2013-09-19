@@ -27,6 +27,8 @@ class Crypto {
 		std::string encrypt(std::string data);
 		std::string decrypt(std::string data);
 
+		static void createNewKeyFile(const std::string& keyfilepath, std::string password);
+
 	private:
 		A2MXcrypto* m_a2mxcrypto = 0;
 };
