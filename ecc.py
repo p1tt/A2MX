@@ -10,7 +10,7 @@ class ECC():
 			pubkey_data = bytes(pubkey_data)
 			self.crypto = A2MXcrypto(pubkey_data=pubkey_data)
 		else:
-			raise ValueError('Neither PKCS8 DER encoded keyfiles nor public key present.')
+			raise ValueError('Neither keyfile nor public key present.')
 
 	def pubkeyData(self):
 		return self.crypto.pubkeyData()

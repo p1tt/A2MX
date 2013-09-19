@@ -148,28 +148,17 @@ class A2MXAccess():
 		if self.auth != True:
 			return { 'error': 'Not authenticated' }
 
-		if len(bs) > 1:
+		if len(bs) != 1:
 			raise A2MXAccessException('Only one command at a time supported')
 		for k, v in bs.items():
 			f = getattr(self, k, None)
 			if getattr(f, 'A2MXAccessRequest__marker__', False) != True:
 				raise A2MXAccessException('Invalid request {}'.format(k))
-			args = None
-			kwargs = None
-			for a in v:
-				if isinstance(a, (tuple, list)):
-					if args == None:
-						args = a
-					else:
-						raise A2MXAccessException('Invalid arguments')
-				if isinstance(a, (dict, OrderedDict)):
-					if kwargs == None:
-						kwargs = a
-					else:
-						raise A2MXAccessException('Invalid arguments')
-			args = args if args else []
-			kwargs = kwargs if kwargs else {}
-			return f(*args, **kwargs)
+			if isinstance(v, (dict, OrderedDict)):
+				return f(**v)
+			elif v == None:
+				return f()
+			raise A2MXAccessException('Invalid argument '.format(v))
 
 	@A2MXAccessRequest
 	def getpath(self):
