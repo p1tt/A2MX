@@ -4,6 +4,7 @@ import datetime
 from collections import OrderedDict
 import ssl
 import random
+import OpenSSL.crypto
 
 from bson import BSON
 
@@ -159,7 +160,6 @@ class A2MXStream():
 
 		def do_handshake():
 			try:
-				print("TRY IT!")
 				self.sock.do_handshake()
 			except ssl.SSLWantReadError:
 				return
@@ -260,6 +260,10 @@ class A2MXStream():
 				self.__send_pub()
 				self.send(self.request.request('path', **self.path.data))
 		elif not self.tlscert:		# the server has to send a signature of his TLS certificate
+			peercert = self.sock.getpeercert(True)
+			x509 = OpenSSL.crypto.load_certificate(OpenSSL.crypto.FILETYPE_ASN1, peercert)
+			if x509.get_pubkey().bits() < 4096:
+				raise ValueError('TLS server certificate < 4096 bits.')
 			tlscert_ok = self.remote_ecc.verifyAddress(data, self.sock.getpeercert(True))
 			if not tlscert_ok:
 				raise ValueError('Signature verification of server TLS certificate failed!')

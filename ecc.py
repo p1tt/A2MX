@@ -5,7 +5,7 @@ b58chars = b'123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 class ECC():
 	def __init__(self, keyfile=None, pubkey_data=None):
 		if keyfile:
-			self.crypto = A2MXcrypto(keyfile.encode('UTF-8'), b'')
+			self.crypto = A2MXcrypto(keyfile, '')
 		elif pubkey_data:
 			pubkey_data = bytes(pubkey_data)
 			self.crypto = A2MXcrypto(pubkey_data=pubkey_data)

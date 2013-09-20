@@ -2,7 +2,6 @@ from libcpp.string cimport string
 
 cdef extern from "crypto.h":
 	cdef cppclass Crypto:
-		Crypto(string der_keyfile_address, string der_keyfile_sign, string der_keyfile_encrypt) except +
 		Crypto(string keyfilepath, string password) except +
 		Crypto(string pubkey_data) except +
 
@@ -27,17 +26,13 @@ cdef extern from "crypto.h" namespace "Crypto":
 cdef class A2MXcrypto:
 	cdef Crypto *thisptr
 
-	def __cinit__(self, bytes keyfilepath=None, bytes password=None, bytes pubkey_data=None, bytes der_keyfile_address=None, bytes der_keyfile_sign=None, bytes der_keyfile_encrypt=None):
-		if keyfilepath != None and password != None and pubkey_data == None and der_keyfile_address == None and der_keyfile_sign == None and der_keyfile_encrypt == None:
-			# encrypted keyfile
-			self.thisptr = new Crypto(keyfilepath, password)
-		elif keyfilepath == None and password == None and pubkey_data == None and der_keyfile_address != None and der_keyfile_sign != None and der_keyfile_encrypt != None:
-			# PKCS8 DER keyfiles
-			self.thisptr = new Crypto(der_keyfile_address, der_keyfile_sign, der_keyfile_encrypt)
-		elif keyfilepath == None and password == None and pubkey_data != None and der_keyfile_address == None and der_keyfile_sign == None and der_keyfile_encrypt == None:
-			# pubkey data
+	def __cinit__(self, str keyfilepath=None, str password=None, bytes pubkey_data=None):
+		if keyfilepath != None:
+			if password == None:
+				password = ''
+			self.thisptr = new Crypto(keyfilepath.encode('UTF-8'), password.encode('UTF-8'))
+		elif keyfilepath == None and password == None and pubkey_data != None:
 			self.thisptr = new Crypto(pubkey_data)
-			return
 		else:
 			raise Exception("Invalid arguments")
 
@@ -73,3 +68,28 @@ cdef class A2MXcrypto:
 	@staticmethod
 	def createNewKeyFile(bytes path, bytes password):
 		createNewKeyFile(path, password)
+
+cdef extern from "a2mxpow.h":
+	cdef cppclass A2MXpow nogil:
+		A2MXpow() except +
+		int calculate(unsigned char* messagehash, int messagesize, double difficulty)
+
+cdef class ProofOfWork:
+	cdef A2MXpow *thisptr
+
+	def __cinit__(self):
+		self.thisptr = new A2MXpow()
+
+	def __dealloc__(self):
+		del self.thisptr
+
+	def calculate(self, bytes messagehash, int messagesize, double difficulty):
+		if len(messagehash) != 256 / 8:
+			raise ValueError('messagehash is not 256 bits long.')
+		cdef unsigned char* mh = messagehash
+		cdef int ms = messagesize
+		cdef double d = difficulty
+		cdef unsigned long long nonce
+		with nogil:
+			nonce = self.thisptr.calculate(mh, ms, d)
+		return nonce

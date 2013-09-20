@@ -7,10 +7,6 @@ static std::string sb2str(SecByteBlock data) {
 	return std::string((char*)data.data(), data.size());
 }
 
-Crypto::Crypto(std::string der_keyfile_address, std::string der_keyfile_sign, std::string der_keyfile_encrypt) {
-	m_a2mxcrypto = new A2MXcrypto(der_keyfile_address, der_keyfile_sign, der_keyfile_encrypt);
-}
-
 Crypto::Crypto(std::string keyfilepath, std::string password) {
 	m_a2mxcrypto = new A2MXcrypto(keyfilepath, str2sb(password));
 }

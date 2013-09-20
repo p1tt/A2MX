@@ -4,7 +4,6 @@
 
 class Crypto {
 	public:
-		Crypto(std::string der_keyfile_address, std::string der_keyfile_sign, std::string der_keyfile_encrypt);
 		Crypto(std::string keyfilepath, std::string password);
 		Crypto(std::string pubkey_data);
 		~Crypto();
