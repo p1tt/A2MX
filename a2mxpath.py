@@ -1,22 +1,29 @@
 import datetime
+import hashlib
 from collections import OrderedDict
 
 from bson import BSON
 
 from ecc import ECC
 from a2mxcommon import InvalidDataException
+from a2mxpow import calculatePOW, checkPOW
 from config import config
 
 def now():
 	return BSON.decode(BSON.encode({'t': datetime.datetime.now(datetime.timezone.utc)}), tz_aware=True)['t']
 
 class A2MXPath():
-	def __init__(self, A=None, B=None, T=None, UA=None, UB=None, SA=None, SB=None, D=None, DS=None, no_URI=False):
+	def __init__(self, A=None, B=None, T=None, UA=None, UB=None, M=None, PB=None, PF=None, PD=None, P=None, SA=None, SB=None, D=None, DS=None):
 		# A = node A public key data (address, sign and encrypt compressed public keys)
 		# B = node B public key data
 		# T = timestamp
 		# UA = AX URI node A
 		# UB = AX URI node B
+		# M = MaxSize
+		# PB = POW broadcast
+		# PF = POW forward
+		# PD = POW direct
+		# P = path proof of work
 		# SA = node A signature (over A, B, T and UA if present)
 		# SB = node B signature (over A, B, T and UB if present)
 		# D = deleted timestamp
@@ -27,14 +34,14 @@ class A2MXPath():
 			self.__a = ECC(pubkey_data=A)
 		else:
 			self.__a = A
-			if not SA and not no_URI and self.__a.hasPrivkey():
+			if not SA and self.__a.hasPrivkey():
 				UA = config['publish_axuri']
 
 		if not isinstance(B, ECC):
 			self.__b = ECC(pubkey_data=B)
 		else:
 			self.__b = B
-			if not SB and not no_URI and self.__b.hasPrivkey():
+			if not SB and self.__b.hasPrivkey():
 				UB = config['publish_axuri']
 
 		def testURI(uri):
@@ -70,10 +77,23 @@ class A2MXPath():
 		else:
 			self.__t = now()
 
+		assert isinstance(M, int)
+		assert isinstance(PB, float)
+		assert isinstance(PF, float)
+		assert isinstance(PD, float)
+		self.__maxsize = M
+		self.__pb = PB
+		self.__pf = PF
+		self.__pd = PD
+
 		self.__sigod = OrderedDict()
 		self.__sigod['A'] = self.__a.pubkeyData()
 		self.__sigod['B'] = self.__b.pubkeyData()
 		self.__sigod['T'] = self.__t
+		self.__sigod['M'] = self.__maxsize
+		self.__sigod['PB'] = PB
+		self.__sigod['PF'] = PF
+		self.__sigod['PD'] = PD
 
 		if self.__ua:
 			self.__sigod['UA'] = self.__ua
@@ -110,6 +130,22 @@ class A2MXPath():
 		if not (self.__sa or self.__sb):
 			raise ValueError('Invalid signatures.')
 
+		pow_data = BSON.encode(self.__sigod)
+		if P == True:
+			self.pow_done = None
+			def setpow(nonce):
+				self.__pow = nonce
+				if self.pow_done:
+					self.pow_done()
+			calculatePOW(message=pow_data, difficulty=3.0, callback=setpow)
+		else:
+			self.__pow = P
+			if isinstance(P, int):
+				if not checkPOW(message=pow_data, difficulty=3.0, nonce=P):
+					raise ValueError('Invalid POW')
+			elif P != None:
+				raise ValueError('Invalid POW value')
+
 		self.__d = D
 		self.__ds = DS
 
@@ -129,12 +165,16 @@ class A2MXPath():
 			if not verify:
 				raise InvalidDataException('DS signature verify failed.')
 
+		self.__longhash = hashlib.sha256(BSON.encode(self.__sigod)).digest()
+
 	def __getstate__(self):
-		state = { 'A': self.__a.pubkeyData(), 'B': self.__b.pubkeyData(), 'T': self.__t, 'SA': self.__sa, 'SB': self.__sb }
+		state = { 'A': self.__a.pubkeyData(), 'B': self.__b.pubkeyData(), 'T': self.__t, 'SA': self.__sa, 'SB': self.__sb, 'M': self.__maxsize, 'PB': self.__pb, 'PF': self.__pf, 'PD': self.__pd }
 		if self.__ua:
 			state['UA'] = self.__ua
 		if self.__ub:
 			state['UB'] = self.__ub
+		if self.__pow:
+			state['P'] = self.__pow
 		if self.__d:
 			state['D'] = self.__d
 			state['DS'] = self.__ds
@@ -144,6 +184,11 @@ class A2MXPath():
 		self.__a = ECC(pubkey_data=state['A'])
 		self.__b = ECC(pubkey_data=state['B'])
 		self.__t = state['T']
+		self.__maxsize = state['M']
+		self.__pb = state['PB']
+		self.__pf = state['PF']
+		self.__pd = state['PD']
+		self.__pow = state['P'] if 'P' in state else None
 		self.__sa = state['SA']
 		self.__sb = state['SB']
 		self.__ua = state['UA'] if 'UA' in state else None
@@ -154,23 +199,19 @@ class A2MXPath():
 		else:
 			self.__d = None
 			self.__ds = None
+		self.__hash = hashlib.sha256(self.__a.pubkeyHash() + self.__b.pubkeyHash())
+		self.__longhash = hashlib.sha256(BSON.encode(self.__sigod)).digest()
 
-	def updateSignatures(self, other):
-		if self != other or self.timestamp != other.timestamp or self.deleted != other.deleted:
-			raise ValueError('Updates are only possible with equal paths.')
-		data = other.data
-		if self.__sa == None:
-			self.__sa = data['SA']
-		if self.__sb == None:
-			self.__sb = data['SB']
-		if self.__ua == None:
-			self.__ua = data['UA']
-		if self.__ub == None:
-			self.__ub = data['UB']
+	def __hash__(self):
+		return self.__hash
+
+	@property
+	def longHash(self):
+		return self.__longhash
 
 	@property
 	def isComplete(self):
-		return self.__sa != None and self.__sb != None
+		return self.__sa != None and self.__sb != None and self.__pow != None
 
 	@property
 	def data(self):
@@ -259,10 +300,102 @@ class A2MXPath():
 		return self.newest_timestamp > other.newest_timestamp
 
 	def __str__(self):
-		return 'A: {}{} B: {}{} Timestamp: {} Deleted: {}{}'.format(
+		return 'A: {}{} B: {}{} Timestamp: {} M: {} PB: {} PF: {} PD: {} POW: {} Deleted: {}{}'.format(
 			self.__a.pubkeyHashBase58(), " ({})".format(self.__ua) if self.__ua else "",
 			self.__b.pubkeyHashBase58(), " ({})".format(self.__ub) if self.__ub else "",
 			self.__t.isoformat(),
+			self.__maxsize, self.__pb, self.__pf, self.__pd, self.__pow,
 			self.__d.isoformat() if self.__d else False,
 			"" if self.isComplete else " Incomplete")
 
+class PathList():
+	def __init__(self):
+		self.paths = []
+		self.nodes = {}
+
+	def new(self, path, fromhash='<Unknown>'):
+		try:
+			last_timestamp = self.paths[-1]
+		except AttributeError:
+			self._insert(path, 0)
+			print("first path from {}".format(fromhash), path)
+			return
+
+		recalc_index = None
+		if path in self.paths:
+			oldindex = self.paths.index(path)
+			oldpath = self.paths[oldindex]
+			if path is oldpath:
+				print("updating path (old not existing anymore) from {}".format(fromhash), "\n  new:", path)
+				del self.paths[oldindex]
+				recalc_index = oldindex
+			elif path.equal(oldpath):
+				print("ignoring known path from {}\n ".format(fromhash), path)
+				return
+			elif path.is_better_than(oldpath):
+				print("updating path from {}\n  old:".format(fromhash), oldpath, "\n  new:", path)
+				del self.paths[oldindex]
+				recalc_index = oldindex
+			else:
+				print("ignoring path with older timestamp as known path from {}\n  old:".format(fromhash), oldpath, "\n  new:", path)
+				return
+		else:
+			print("new path from {}\n ".format(fromhash), path)
+
+		if last_timestamp < path.newest_timestamp:
+			index = len(self.paths)
+		else:
+			index = self._findindex(path)
+		self._insert(path, index, recalc_index)
+		print("nodelist.add\n------------", str(self), "\n^^^")
+
+	def del(self, path):
+		oldindex = self.paths.index(path)
+		self.paths.remove(path)
+		path.markdelete()
+		self._insert(path, len(self.paths), oldindex)
+
+	def _findindex(self, path):
+		new_timestamp = path.newest_timestamp
+		for i in range(0, len(self.paths)):
+			if self.paths[i].newest_timestamp > new_timestamp:
+				break
+		return i
+
+	def _insert(self, path, index, recalc_index=None):
+		self.paths.insert(index, path)
+
+		if recalc_index == None:
+			recalc_index = index
+
+		try:
+			rollhash = self.paths[recalc_index - 1].rollhash
+		except AttributeError:
+			rollhash = hashlib.sha256(bytes()).digest()
+
+		for i in range(recalc_index, len(self.paths)):
+			path = self.paths[i]
+			if path.deleted:
+				continue
+			rollhash = hashlib.sha256(rollhash + path.longHash)
+			path.rollhash = rollhash
+
+		self._nodeadd(path)
+
+	def _nodeadd(self, path):
+		try:
+			self.nodes[path.AHash].add(path)
+		except KeyError:
+			self.nodes[path.AHash] = set()
+			self.nodes[path.AHash].add(path)
+		try:
+			self.nodes[path.BHash].add(path)
+		except KeyError:
+			self.nodes[path.BHash] = set()
+			self.nodes[path.BHash].add(path)
+
+	def __str__(self):
+		s = ''
+		for path in self.paths:
+			s += str(path) + ' {}'.format(path.rollhash)
+		return s

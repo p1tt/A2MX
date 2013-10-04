@@ -73,6 +73,7 @@ cdef extern from "a2mxpow.h":
 	cdef cppclass A2MXpow nogil:
 		A2MXpow() except +
 		int calculate(unsigned char* messagehash, int messagesize, double difficulty)
+		bint check(unsigned char* messagehash, int messagesize, double difficulty, unsigned long long nonce)
 
 cdef class ProofOfWork:
 	cdef A2MXpow *thisptr
@@ -93,3 +94,14 @@ cdef class ProofOfWork:
 		with nogil:
 			nonce = self.thisptr.calculate(mh, ms, d)
 		return nonce
+
+	def check(self, bytes messagehash, int messagesize, double difficulty, unsigned long long nonce):
+		if len(messagehash) != 256 / 8:
+			raise ValueError('messagehash is not 256 bits long.')
+		cdef unsigned char* mh = messagehash
+		cdef int ms = messagesize
+		cdef double d = difficulty
+		with nogil:
+			ok = self.thisptr.check(mh, ms, d, nonce)
+		return ok
+

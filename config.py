@@ -9,7 +9,11 @@ config = {
 	'targets': [],
 	'connections': 5,
 	'max_connections': 10,
-	'mongodb_uri': None
+	'mongodb_uri': None,
+	'MaxSize': 1024*1024*20,
+	'PB': 3.0,
+	'PF': 2.0,
+	'PD': 1.0,
 }
 
 try:

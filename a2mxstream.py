@@ -6,16 +6,13 @@ import ssl
 import random
 import sys
 import traceback
-#import OpenSSL.crypto
 
 from bson import BSON
 
 from config import config
 from ecc import ECC
 
-from a2mxpath import A2MXPath
-from a2mxaccess import A2MXAccess
-from a2mxcommon import InvalidDataException
+import a2mxrequest
 
 def SSL(sock, server=False):
 	context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
@@ -26,31 +23,6 @@ def SSL(sock, server=False):
 		context.load_dh_params(config['dh.pem'])
 		context.load_cert_chain(config['tls.cert.pem'], config['tls.key.pem'])
 	return context.wrap_socket(sock, server_side=server, do_handshake_on_connect=False)
-
-class A2MXRequest():
-	def __init__(self, onlink=True):
-		self.onlink = onlink
-	def __call__(self, fn):
-		fn.A2MXRequest__marker__ = True
-		fn.A2MXRequest__marker__onlink = self.onlink
-		return fn
-
-class AsyncResult():
-	@property
-	def result(self):
-		return self.__result
-	@result.setter
-	def result(self, value):
-		self.__result = value
-		self.call_on_set(value)
-	@property
-	def call_on_set(self):
-		return self.__call_on_set
-	@call_on_set.setter
-	def call_on_set(self, value):
-		self.__call_on_set = value
-		if hasattr(self, '__result'):
-			value(self.__result)
 
 def parseData(obj, onlink, data, send_callback):
 	bs = BSON.decode(bytes(data), tz_aware=True, as_class=OrderedDict)
@@ -69,7 +41,7 @@ def parseData(obj, onlink, data, send_callback):
 			rid = fndict.get('R', None)
 			nextrequest = fndict.get('N', None)
 
-			if isinstance(r, AsyncResult):
+			if isinstance(r, a2mxrequest.AsyncResult):
 				def async(result):
 					if nextrequest:
 						execute(nextrequest)
@@ -94,53 +66,12 @@ def parseData(obj, onlink, data, send_callback):
 	if len(result):
 		send_callback(result)
 
-class Direct():
-	def __init__(self, stream):
-		print("init Direct")
-		self.stream = stream
-
-class Access():
-	def __init__(self, stream):
-		print("init Access")
-		self.stream = stream
-
-class Forward():
-	def __init__(self, stream, setup=False):
-		print("init Forward")
-		self.stream = stream
-		self.auth = False
-
-		if setup:
-			self.sid = random.randint(1, 0xFFFF)
-			def forward_session(ok):
-				def authed(ok):
-					print("authed :-)", ok)
-					self.auth = True
-				self.stream.pub_sent = True
-				pubkeyData = self.stream.node.ecc.pubkeyData()
-				self.sendCall('Authenticate', pubkeyData, self.stream.node.ecc.signAddress(pubkeyData), callback=authed)
-			self.stream.sendCall('NewSession', self.sid, 'Forward', callback=forward_session)
-
-	def sendCall(self, fn, *args, **kwargs):
-		kwargs['session'] = self.sid
-		return self.stream.sendCall(fn, *args, **kwargs)
-
-	@A2MXRequest()
-	def Authenticate(self, PubKey, PubKeySignature):
-		ecc = ECC(pubkey_data=PubKey)
-		if not ecc.verifyAddress(PubKeySignature, PubKey):
-			raise ValueError('Failed to verify public key data.')
-		self.stream.remote_ecc = ecc
-		self.stream.send = self.stream.encrypted_send
-		self.auth = True
-		return True
-
-class ConnectionSetup():
+class SessionSetup():
 	def __init__(self, stream):
 		self.stream = stream
-		self.types = { 'Forward': Forward, 'Direct': Direct, 'Access': Access }
+		self.types = { 'Forward': a2mxrequest.Forward, 'Direct': a2mxrequest.Direct, 'Access': a2mxrequest.Access }
 
-	@A2MXRequest()
+	@a2mxrequest.A2MXRequest()
 	def A2MXv1(self, ClientTimestamp):
 		now = datetime.datetime.now(datetime.timezone.utc)
 		delta = datetime.timedelta(seconds=60)
@@ -152,14 +83,16 @@ class ConnectionSetup():
 		self.stream.pub_sent = True
 		return { 'PubKey': pubkeyData, 'PubKeySignature': ecc.signAddress(pubkeyData), 'TLSSignature': ecc.signAddress(self.stream.tlscert) }
 
-	@A2MXRequest()
-	def NewSession(self, Session, Type):
-		assert isinstance(Session, int)
-		assert Session < 0x10000
-		assert Session not in self.stream.sessions
+	@a2mxrequest.A2MXRequest()
+	def NewSession(self, Type):
 		assert Type in self.types
-		self.stream.sessions[Session] = self.types[Type](self.stream)
-		return True
+		while True:
+			session = random.randint(1, 0xFFFF)
+			if session not in self.stream.sessions:
+				break
+		self.stream.sessions[session] = self.types[Type](self.stream)
+		self.stream.sessions[session].sid = session
+		return session
 
 class A2MXStream():
 	def __init__(self, node=None, uri=None, sock=None, pubkey_hash=None):
@@ -187,7 +120,7 @@ class A2MXStream():
 		self.node.wremove(self)
 		self.node.remove(self)
 
-		self.sessions = { 0: ConnectionSetup(self) }
+		self.sessions = { 0: SessionSetup(self) }
 		self.callbacks = {}
 		self.send = self.raw_send
 		self.remote_ecc = None
@@ -324,7 +257,6 @@ class A2MXStream():
 				PubKey = kwargs['PubKey']
 				PubKeySignature = kwargs['PubKeySignature']
 				TLSSignature = kwargs['TLSSignature']
-				print(PubKey, PubKeySignature, TLSSignature)
 
 				self.remote_ecc = ECC(pubkey_data=PubKey)
 				self.send = self.encrypted_send
@@ -340,8 +272,9 @@ class A2MXStream():
 				if not self.remote_ecc.verifyAddress(TLSSignature, tlscert):
 					raise ValueError('TLSSignature verification failed.')
 				print("TLS connection up")
+				self.node.add_stream(self)
 
-				self.forward = Forward(self, True)
+				self.forward = a2mxrequest.Forward(self, True)
 
 			self.sendCall('A2MXv1', datetime.datetime.now(datetime.timezone.utc), callback=version_response)
 
@@ -368,7 +301,6 @@ class A2MXStream():
 		assert len(self._data) >= 5
 		length, onlink, session = struct.unpack_from('>HBH', self._data[:5])
 		del self._data[:5]
-		print("getLength", length, onlink, session)
 		if length == 0:
 			return
 
@@ -392,7 +324,6 @@ class A2MXStream():
 				total_length = len(data) - presize
 				offset = 0
 
-			print("getData", stripe, mid, total_length, offset, data[presize:])
 
 			self.data(onlink, session, data[presize:])
 		self.handler = (length, getData)
@@ -497,7 +428,6 @@ class A2MXStream():
 		if stripe != 0 and stripe != 1:
 			raise NotImplemented('Stripe >1 currently not implemented.')
 		first = True
-		print("BS", bs)
 		fulldata = bytearray(BSON.encode(bs))
 		dataid = 1
 		for d in data:

@@ -127,8 +127,8 @@ class A2MXNode():
 		self.selectloop.wremove(selectable)
 
 	def add_stream(self, stream):
-		if stream.remote_ecc.pubkeyHash() in self.connected_nodes:
-			return False
+#		if stream.remote_ecc.pubkeyHash() in self.connected_nodes:
+#			return False
 		assert stream not in self.streams
 		self.streams.append(stream)
 		self.connected_nodes[stream.remote_ecc.pubkeyHash()] = stream
@@ -141,10 +141,8 @@ class A2MXNode():
 		assert stream.remote_ecc.pubkeyHash() in self.connected_nodes and self.connected_nodes[stream.remote_ecc.pubkeyHash()] == stream
 		del self.connected_nodes[stream.remote_ecc.pubkeyHash()]
 
-		if stream.path.isComplete:
+		if stream.path and stream.path.isComplete:
 			self.del_path(stream.path)
-		else:
-			print("not deleting incomplete path", stream.path)
 
 	def new_path(self, path, stream=None):
 		fromhash = stream.remote_ecc.pubkeyHashBase58() if stream else 'myself'
@@ -177,12 +175,11 @@ class A2MXNode():
 
 		self.update_nodes(path)
 
-		if stream and self.ecc.pubkeyHash() in path.hashes:
-			stream.send(stream.request.request('path', **path.data))
 		for ostream in self.streams:
 			if ostream == stream:
 				continue
-			ostream.send(ostream.request.request('path', **path.data))
+			if hasattr(ostream, 'forward'):
+				ostream.forward.sendCall('path', path.data)
 
 	def del_path(self, path):
 		path.markdelete()
@@ -225,6 +222,8 @@ class A2MXNode():
 		myhash = self.ecc.pubkeyHash()
 
 		for path in self.paths:
+			if path.deleted:
+				continue
 			def check(uri, h):
 				if uri == None:
 					return
