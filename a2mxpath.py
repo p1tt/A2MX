@@ -1,5 +1,6 @@
 import datetime
 import hashlib
+import pickle
 from collections import OrderedDict
 
 from bson import BSON
@@ -151,11 +152,11 @@ class A2MXPath():
 
 		if self.__d:
 			if self.__d > datetime.datetime.now(datetime.timezone.utc):
-				raise ValueError('deleted timestamp is in the future')
+				raise ValueError('Deleted timestamp is in the future.')
 			if self.__d < self.__t:
-				raise ValueError('deleted timestamp is older than timestamp')
+				raise ValueError('Deleted timestamp is older than timestamp.')
 			if not self.isComplete:
-				raise ValueError('Deleted path my not be incomplete.')
+				raise ValueError('Deleted path may not be incomplete.')
 
 			self.__sigod['SA'] = self.__sa
 			self.__sigod['SB'] = self.__sb
@@ -165,6 +166,7 @@ class A2MXPath():
 			if not verify:
 				raise InvalidDataException('DS signature verify failed.')
 
+		self.__hash = hash(self.AHash + self.BHash)
 		self.__longhash = hashlib.sha256(BSON.encode(self.__sigod)).digest()
 
 	def __getstate__(self):
@@ -181,6 +183,7 @@ class A2MXPath():
 		return state
 
 	def __setstate__(self, state):
+		return A2MXPath.__init__(self, **state)
 		self.__a = ECC(pubkey_data=state['A'])
 		self.__b = ECC(pubkey_data=state['B'])
 		self.__t = state['T']
@@ -199,7 +202,7 @@ class A2MXPath():
 		else:
 			self.__d = None
 			self.__ds = None
-		self.__hash = hashlib.sha256(self.__a.pubkeyHash() + self.__b.pubkeyHash())
+		self.__hash = hash(self.AHash + self.BHash)
 		self.__longhash = hashlib.sha256(BSON.encode(self.__sigod)).digest()
 
 	def __hash__(self):
@@ -312,14 +315,27 @@ class PathList():
 	def __init__(self):
 		self.paths = []
 		self.nodes = {}
+		self.axuris = {}
+		try:
+			with open(config['paths.db'], 'rb') as f:
+				paths = pickle.load(f)
+		except FileNotFoundError:
+			pass
+		else:
+			for path in paths:
+				self.new(path)
+
+	def save(self):
+		with open(config['paths.db'], 'wb') as f:
+			pickle.dump(self.paths, f)
 
 	def new(self, path, fromhash='<Unknown>'):
 		try:
-			last_timestamp = self.paths[-1]
-		except AttributeError:
-			self._insert(path, 0)
+			last_timestamp = self.paths[-1].newest_timestamp
+		except IndexError:
 			print("first path from {}".format(fromhash), path)
-			return
+			self._insert(path, 0)
+			return True
 
 		recalc_index = None
 		if path in self.paths:
@@ -331,15 +347,19 @@ class PathList():
 				recalc_index = oldindex
 			elif path.equal(oldpath):
 				print("ignoring known path from {}\n ".format(fromhash), path)
-				return
+				return False
 			elif path.is_better_than(oldpath):
 				print("updating path from {}\n  old:".format(fromhash), oldpath, "\n  new:", path)
 				del self.paths[oldindex]
 				recalc_index = oldindex
 			else:
 				print("ignoring path with older timestamp as known path from {}\n  old:".format(fromhash), oldpath, "\n  new:", path)
-				return
+				return False
 		else:
+			if path.AURI:
+				self.axuris[path.AHash] = path.AURI
+			if path.BURI:
+				self.axuris[path.BHash] = path.BURI
 			print("new path from {}\n ".format(fromhash), path)
 
 		if last_timestamp < path.newest_timestamp:
@@ -347,20 +367,20 @@ class PathList():
 		else:
 			index = self._findindex(path)
 		self._insert(path, index, recalc_index)
-		print("nodelist.add\n------------", str(self), "\n^^^")
+		return True
 
-	def del(self, path):
-		oldindex = self.paths.index(path)
-		self.paths.remove(path)
+	def delete(self, path):
 		path.markdelete()
-		self._insert(path, len(self.paths), oldindex)
+		self.new(path)
 
 	def _findindex(self, path):
 		new_timestamp = path.newest_timestamp
+		index = None
 		for i in range(0, len(self.paths)):
 			if self.paths[i].newest_timestamp > new_timestamp:
+				index = i
 				break
-		return i
+		return index
 
 	def _insert(self, path, index, recalc_index=None):
 		self.paths.insert(index, path)
@@ -377,7 +397,7 @@ class PathList():
 			path = self.paths[i]
 			if path.deleted:
 				continue
-			rollhash = hashlib.sha256(rollhash + path.longHash)
+			rollhash = hashlib.sha256(rollhash + path.longHash).digest()
 			path.rollhash = rollhash
 
 		self._nodeadd(path)
@@ -395,7 +415,8 @@ class PathList():
 			self.nodes[path.BHash].add(path)
 
 	def __str__(self):
-		s = ''
+		s = 'PathList:\n'
 		for path in self.paths:
-			s += str(path) + ' {}'.format(path.rollhash)
+			s += str(path) + ' {}\n'.format(path.rollhash)
+		s += '-- END --'
 		return s
