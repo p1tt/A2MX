@@ -184,26 +184,6 @@ class A2MXPath():
 
 	def __setstate__(self, state):
 		return A2MXPath.__init__(self, **state)
-		self.__a = ECC(pubkey_data=state['A'])
-		self.__b = ECC(pubkey_data=state['B'])
-		self.__t = state['T']
-		self.__maxsize = state['M']
-		self.__pb = state['PB']
-		self.__pf = state['PF']
-		self.__pd = state['PD']
-		self.__pow = state['P'] if 'P' in state else None
-		self.__sa = state['SA']
-		self.__sb = state['SB']
-		self.__ua = state['UA'] if 'UA' in state else None
-		self.__ub = state['UB'] if 'UB' in state else None
-		if 'D' in state:
-			self.__d = state['D']
-			self.__ds = state['DS']
-		else:
-			self.__d = None
-			self.__ds = None
-		self.__hash = hash(self.AHash + self.BHash)
-		self.__longhash = hashlib.sha256(BSON.encode(self.__sigod)).digest()
 
 	def __hash__(self):
 		return self.__hash
@@ -286,7 +266,7 @@ class A2MXPath():
 			return self.AHash
 		raise ValueError('otherHash is neither A or B.')
 
-	def pubkeyData(self, h):
+	def ecc(self, h):
 		if h == self.AHash:
 			return self.A
 		if h == self.BHash:
@@ -377,9 +357,16 @@ class PathList():
 		new_timestamp = path.newest_timestamp
 		index = None
 		for i in range(0, len(self.paths)):
-			if self.paths[i].newest_timestamp > new_timestamp:
+			p = self.paths[i]
+			if p.newest_timestamp > new_timestamp:
 				index = i
 				break
+			elif p.newest_timestamp == new_timestamp:
+				if hash(p) > hash(path):
+					index = i
+					break
+		if index == None:
+			index = len(self.paths)
 		return index
 
 	def _insert(self, path, index, recalc_index=None):
@@ -387,15 +374,16 @@ class PathList():
 
 		if recalc_index == None:
 			recalc_index = index
-
-		try:
-			rollhash = self.paths[recalc_index - 1].rollhash
-		except AttributeError:
+		if recalc_index == 0:
 			rollhash = hashlib.sha256(bytes()).digest()
+		else:
+			lastpath = self.paths[recalc_index - 1]
+			rollhash = lastpath.rollhash
 
 		for i in range(recalc_index, len(self.paths)):
 			path = self.paths[i]
 			if path.deleted:
+				path.rollhash = rollhash
 				continue
 			rollhash = hashlib.sha256(rollhash + path.longHash).digest()
 			path.rollhash = rollhash
