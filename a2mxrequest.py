@@ -73,6 +73,7 @@ class Forward():
 							self.sendCall('setpath', p.data)
 							self.stream.path = p
 							self.stream.node.new_path(self.stream.path, self.stream)
+							self.sendCall('pull', *self.stream.node.pathlist.lastinfo())
 						p.pow_done = pathfinished
 					self.sendCall('getpath', config['MaxSize'], config['PB'], config['PF'], config['PD'], callback=gotpath)
 				self.stream.pub_sent = True
@@ -130,8 +131,19 @@ class Forward():
 		self.stream.node.new_path(self.stream.path, self.stream)
 
 	@A2MXRequest()
-	def pull(self, timestamp):
-		pass
+	def pull(self, timestamp, rollhash):
+		print("pull", timestamp, rollhash)
+		pathlist = self.stream.node.pathlist
+		if (timestamp, rollhash) == pathlist.lastinfo():
+			return True
+		try:
+			index = pathlist.rollhashes[rollhash].position
+		except KeyError:
+			index = 0
+		paths = pathlist.paths
+		for i in range(index, len(paths)):
+			self.sendCall('path', paths[i].data)
+		return False
 
 	@A2MXRequest()
 	def path(self, path):
@@ -176,30 +188,3 @@ class Forward():
 		self.stream.node.selectloop.tadd(seconds, setresult)
 		return ar
 
-	def xxpath(self, **kwargs):
-		assert 'no_URI' not in kwargs
-
-		if kwargs['A'] == self.node.ecc.pubkeyData():
-			kwargs['A'] = self.node.ecc
-		elif kwargs['B'] == self.node.ecc.pubkeyData():
-			kwargs['B'] = self.node.ecc
-		p = A2MXPath(**kwargs)
-
-		assert p.isComplete
-		self.node.new_path(p, self.stream)
-		if self.stream and self.stream.path == p and not self.stream.path.isComplete:
-			self.stream.path = p
-			print("incoming" if self.stream.uri == None else "outgoing", "connection up with", self.stream.remote_ecc.pubkeyHashBase58())
-			if not self.node.add_stream(self.stream):
-				print("add_stream == False")
-				self.stream.shutdown()
-				return
-
-			try:
-				last_known_path = self.node.paths[-2]
-			except IndexError:
-				last_known_path = datetime.datetime.min
-			else:
-				last_known_path = last_known_path.newest_timestamp
-			r = self.request('pull', last_known_path)
-			self.stream.raw_send(r, direct=True)

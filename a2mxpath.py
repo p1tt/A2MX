@@ -295,6 +295,7 @@ class PathList():
 	def __init__(self):
 		self.paths = []
 		self.nodes = {}
+		self.rollhashes = {}
 		self.axuris = {}
 		try:
 			with open(config['paths.db'], 'rb') as f:
@@ -336,9 +337,9 @@ class PathList():
 				print("ignoring path with older timestamp as known path from {}\n  old:".format(fromhash), oldpath, "\n  new:", path)
 				return False
 		else:
-			if path.AURI:
+			if path.AURI and not path.deleted:
 				self.axuris[path.AHash] = path.AURI
-			if path.BURI:
+			if path.BURI and not path.deleted:
 				self.axuris[path.BHash] = path.BURI
 			print("new path from {}\n ".format(fromhash), path)
 
@@ -352,6 +353,13 @@ class PathList():
 	def delete(self, path):
 		path.markdelete()
 		self.new(path)
+
+	def lastinfo(self):
+		try:
+			lp = self.paths[-1]
+		except IndexError:
+			return (datetime.datetime.min, hashlib.sha256(bytes()).digest())
+		return (lp.timestamp, lp.rollhash)
 
 	def _findindex(self, path):
 		new_timestamp = path.newest_timestamp
@@ -382,11 +390,13 @@ class PathList():
 
 		for i in range(recalc_index, len(self.paths)):
 			path = self.paths[i]
+			path.position = i
 			if path.deleted:
 				path.rollhash = rollhash
 				continue
 			rollhash = hashlib.sha256(rollhash + path.longHash).digest()
 			path.rollhash = rollhash
+			self.rollhashes[rollhash] = path
 
 		self._nodeadd(path)
 
