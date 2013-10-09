@@ -73,6 +73,7 @@ class SessionSetup():
 
 	@a2mxrequest.A2MXRequest()
 	def A2MXv1(self, ClientTimestamp):
+		print("ClientTimestamp", ClientTimestamp)
 		now = datetime.datetime.now(datetime.timezone.utc)
 		delta = datetime.timedelta(seconds=60)
 		if ClientTimestamp < now - delta or ClientTimestamp > now + delta:
@@ -323,8 +324,6 @@ class A2MXStream():
 				mid = 0
 				total_length = len(data) - presize
 				offset = 0
-
-
 			self.data(onlink, session, data[presize:])
 		self.handler = (length, getData)
 

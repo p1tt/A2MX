@@ -1,7 +1,7 @@
 import random
 
 from ecc import ECC
-from a2mxpath import A2MXPath
+from a2mxpath import A2MXPath, now
 
 from config import config
 
@@ -31,14 +31,61 @@ class AsyncResult():
 			value(self.__result)
 
 class Direct():
-	def __init__(self, stream, send):
+	def __init__(self, stream):
 		print("init Direct")
 		self.stream = stream
 
+if config['mongodb_uri']:
+	from pymongo import MongoClient
+	from bson import BSON
+	import datetime
+
+	mongoclient = MongoClient(config['mongodb_uri'])
+else:
+	mongoclient = False
+
 class Access():
-	def __init__(self, stream, send):
+	def __init__(self, stream):
 		print("init Access")
 		self.stream = stream
+
+	@A2MXRequest()
+	def Access(self, pubkey_data):
+		if not mongoclient:
+			return False
+		self.ecc = ECC(pubkey_data=pubkey_data)
+		b58hash = self.ecc.pubkeyHashBase58()
+		print("Access to", b58hash)
+		if b58hash not in mongoclient.database_names():
+			return False
+		self.db = mongoclient[b58hash]
+
+		self.auth_timestamp = now()
+		paths = self.db['path'].find()
+		if paths.count() == 1:
+			self.path = A2MXPath(**paths[0])
+			if self.path.ecc(self.ecc.pubkeyHash()).pubkeyData() == self.ecc.pubkeyData():
+				self.auth_address = False
+				return (self.auth_timestamp, False)
+		elif paths.count() > 1:
+			print(b58hash, "check your path database")
+		self.auth_address = True
+		return (self.auth_timestamp, True)
+
+	@A2MXRequest()
+	def Open(self, signature):
+		sigdata = BSON.encode({ 'T': self.auth_timestamp })
+		if self.auth_address and self.ecc.verifyAddress(signature, sigdata):
+			pass
+		elif not self.auth_address and self.ecc.verify(signature, sigdata):
+			pass
+		else:
+			raise ValueError('Login Failed')
+		pathupdate = self.auth_address or self.path.timestamp > datetime.datetime.now - datetime.timedelta(days=7)
+		print("Login to", self.ecc.pubkeyHashBase58(), "OK PathUpdate", pathupdate)
+		if self.auth_address:
+			return True
+		return pathupdate
 
 class Forward():
 	def __init__(self, stream, setup=False):

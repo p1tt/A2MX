@@ -11,4 +11,4 @@ Dependencies
 ------------
 bson python module from pymongo (tested with version 2.6). https://pypi.python.org/pypi/pymongo/
 
-forked pyelliptic from https://github.com/p1tt/pyelliptic.git
+Python 3.4
