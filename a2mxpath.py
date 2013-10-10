@@ -35,14 +35,14 @@ class A2MXPath():
 			self.__a = ECC(pubkey_data=A)
 		else:
 			self.__a = A
-			if not SA and self.__a.hasPrivkey():
+			if not SA and self.__a.hasPrivkey() and not PB < 0:
 				UA = config['publish_axuri']
 
 		if not isinstance(B, ECC):
 			self.__b = ECC(pubkey_data=B)
 		else:
 			self.__b = B
-			if not SB and self.__b.hasPrivkey():
+			if not SB and self.__b.hasPrivkey() and not PB < 0:
 				UB = config['publish_axuri']
 
 		def testURI(uri):

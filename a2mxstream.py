@@ -17,7 +17,7 @@ import a2mxrequest
 def SSL(sock, server=False):
 	context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
 	context.verify_mode = ssl.CERT_NONE
-	context.options = ssl.OP_SINGLE_DH_USE | ssl.OP_CIPHER_SERVER_PREFERENCE
+	context.options = ssl.OP_SINGLE_DH_USE | ssl.OP_CIPHER_SERVER_PREFERENCE | ssl.OP_NO_COMPRESSION
 	context.set_ciphers('DHE-RSA-AES256-GCM-SHA384')
 	if server:
 		context.load_dh_params(config['dh.pem'])
@@ -123,7 +123,6 @@ class A2MXStream():
 
 		self.sessions = { 0: SessionSetup(self) }
 		self.callbacks = {}
-		self.send = self.raw_send
 		self.remote_ecc = None
 		self.__connected = False
 		self.__last_recv = None
@@ -260,7 +259,6 @@ class A2MXStream():
 				TLSSignature = kwargs['TLSSignature']
 
 				self.remote_ecc = ECC(pubkey_data=PubKey)
-				self.send = self.encrypted_send
 				if self.remote_pubkey_hash:
 					if self.remote_ecc.pubkeyHash() != self.remote_pubkey_hash:
 						raise ValueError('Public key hash does not match!')
@@ -311,7 +309,7 @@ class A2MXStream():
 			data = self._data[:length]
 			del self._data[:length]
 
-			if self.pub_sent:
+			if not onlink:
 				data = self.node.ecc.decrypt(data)
 
 			presize = struct.calcsize('>B')
@@ -327,7 +325,7 @@ class A2MXStream():
 			self.data(onlink, session, data[presize:])
 		self.handler = (length, getData)
 
-	def raw_send(self, data, session=0, onlink=True, response=False):
+	def send(self, data, session=0, onlink=True, response=False):
 		if not self.__connected:
 			return False
 		assert isinstance(data, (bytearray, bytes))
@@ -356,12 +354,6 @@ class A2MXStream():
 		else:
 			self.__select_w_fun = None
 			self.node.wremove(self)
-
-	def encrypted_send(self, data, session=0, onlink=True, response=False):
-		if not self.__connected:
-			return False
-		data = self.remote_ecc.encrypt(data)
-		return self.raw_send(data, session, onlink, response)
 
 	def shutdown(self):
 		try:

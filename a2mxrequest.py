@@ -40,7 +40,7 @@ if config['mongodb_uri']:
 	from bson import BSON
 	import datetime
 
-	mongoclient = MongoClient(config['mongodb_uri'])
+	mongoclient = MongoClient(config['mongodb_uri'], tz_aware=True)
 else:
 	mongoclient = False
 
@@ -48,44 +48,64 @@ class Access():
 	def __init__(self, stream):
 		print("init Access")
 		self.stream = stream
+		self.db = None
+		self.auth = False
 
 	@A2MXRequest()
 	def Access(self, pubkey_data):
 		if not mongoclient:
 			return False
-		self.ecc = ECC(pubkey_data=pubkey_data)
-		b58hash = self.ecc.pubkeyHashBase58()
+		self.stream.remote_ecc = ECC(pubkey_data=pubkey_data)
+		b58hash = self.stream.remote_ecc.pubkeyHashBase58()
 		print("Access to", b58hash)
 		if b58hash not in mongoclient.database_names():
 			return False
 		self.db = mongoclient[b58hash]
 
-		self.auth_timestamp = now()
+		self.auth = now()
 		paths = self.db['path'].find()
 		if paths.count() == 1:
-			self.path = A2MXPath(**paths[0])
-			if self.path.ecc(self.ecc.pubkeyHash()).pubkeyData() == self.ecc.pubkeyData():
+			path = paths[0]
+			del path['_id']
+			self.path = A2MXPath(**path)
+			if self.path.ecc(self.stream.remote_ecc.pubkeyHash()) == self.stream.remote_ecc.pubkeyData():
 				self.auth_address = False
-				return (self.auth_timestamp, False)
+				return (self.auth, False)
 		elif paths.count() > 1:
 			print(b58hash, "check your path database")
 		self.auth_address = True
-		return (self.auth_timestamp, True)
+		return (self.auth, True)
 
 	@A2MXRequest()
 	def Open(self, signature):
-		sigdata = BSON.encode({ 'T': self.auth_timestamp })
-		if self.auth_address and self.ecc.verifyAddress(signature, sigdata):
+		if not self.db:
+			raise ValueError('Login failed')
+		sigdata = BSON.encode({ 'T': self.auth })
+		if self.auth_address and self.stream.remote_ecc.verifyAddress(signature, sigdata):
 			pass
-		elif not self.auth_address and self.ecc.verify(signature, sigdata):
+		elif not self.auth_address and self.stream.remote_ecc.verify(signature, sigdata):
 			pass
 		else:
 			raise ValueError('Login Failed')
-		pathupdate = self.auth_address or self.path.timestamp > datetime.datetime.now - datetime.timedelta(days=7)
-		print("Login to", self.ecc.pubkeyHashBase58(), "OK PathUpdate", pathupdate)
-		if self.auth_address:
-			return True
+		self.auth = True
+
+		pathupdate = self.auth_address or self.path.timestamp < datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=7)
+		print("Login to", self.stream.remote_ecc.pubkeyHashBase58(), "OK PathUpdate", pathupdate)
 		return pathupdate
+
+	@A2MXRequest()
+	def GetPath(self, M, PF, PD):
+		if not self.auth == True:
+			raise ValueError('Login Failed')
+		path = A2MXPath(A=self.stream.node.ecc, B=self.stream.remote_ecc, M=M, PB=-1.0, PF=PF, PD=PD)
+		return path.data
+
+	@A2MXRequest()
+	def SetPath(self, **kwargs):
+		path = A2MXPath(**kwargs)
+		self.db['path'].remove()
+		self.db['path'].insert(path.data)
+		return True
 
 class Forward():
 	def __init__(self, stream, setup=False):
@@ -138,7 +158,6 @@ class Forward():
 		if not ecc.verifyAddress(PubKeySignature, PubKey):
 			raise ValueError('Failed to verify public key data.')
 		self.stream.remote_ecc = ecc
-		self.stream.send = self.stream.encrypted_send
 		self.auth = True
 		self.stream.node.add_stream(self.stream)
 		return True
